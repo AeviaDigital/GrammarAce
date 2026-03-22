@@ -38,7 +38,8 @@ function QuestionScreen(p){
     ),
     !p.error&&p.loading&&React.createElement("div",{style:{textAlign:"center",padding:"50px 0"}},
       React.createElement("div",{style:{fontSize:"56px",lineHeight:1,animation:"float 2s ease-in-out infinite",filter:"drop-shadow(0 0 14px rgba(255,209,102,.4))"}},"🦉"),
-      React.createElement("p",{style:{color:MUTED,marginTop:"12px",fontSize:"13px",fontWeight:"600"}},"Archie is crafting your question..."),
+      React.createElement("p",{style:{color:MUTED,marginTop:"12px",fontSize:"13px",fontWeight:"600"}},p.error==="double-checking"?"Archie is double-checking the answer...":"Archie is crafting your question..."),
+      p.error==="double-checking"&&React.createElement("p",{style:{color:MUTED,fontSize:"11px",marginTop:"4px"}},"Verifying accuracy before showing..."),
       React.createElement("div",{style:{display:"flex",gap:"6px",justifyContent:"center",marginTop:"10px"}},[0,1,2].map(function(i){return React.createElement("div",{key:i,style:{width:"7px",height:"7px",borderRadius:"50%",background:GOLD,animation:"pulse 1s "+(i*.2)+"s ease-in-out infinite"}});}))
     ),
     !p.error&&!p.loading&&q&&React.createElement("div",null,
@@ -68,6 +69,10 @@ function QuestionScreen(p){
             React.createElement("span",{style:{color:isOk?TEAL:RED,fontWeight:"900",fontSize:"14px"}},isOk?"Correct!":p.sel===-1?"Time's up!":"Not quite...")
           ),
           React.createElement("p",{style:{color:WHITE,fontSize:"12px",lineHeight:"1.65",margin:0}},q.explanation)
+        ),
+        React.createElement("div",{style:{display:"flex",alignItems:"flex-start",gap:"7px",padding:"8px 10px",background:"rgba(107,122,158,.07)",borderRadius:"10px",marginBottom:"8px",border:"1px solid "+BORDER}},
+          React.createElement("span",{style:{fontSize:"13px",flexShrink:0,marginTop:"1px"}},"⚠️"),
+          React.createElement("p",{style:{color:MUTED,fontSize:"10px",lineHeight:"1.6",margin:0}},"Questions and answers are AI-generated and may occasionally contain errors. Parents and teachers should check regularly for accuracy.")
         ),
         p.answered&&React.createElement("button",{onClick:p.onNext,style:bs("linear-gradient(135deg,"+GOLD+","+ORANGE+")",{width:"100%",color:BG,fontSize:"14px",padding:"13px"})},p.qNum>=p.qTotal?"See My Results":"Next Question")
       )

@@ -192,6 +192,14 @@ function App(){
     try{
       var text=await callGroq(apiKeyRef.current,buildPrompt(subId,tp,yearId,prevRef.current));
       var parsed=validateQuestion(JSON.parse(text));
+      // Option 2: maths arithmetic check (instant, no API call)
+      if(subId==="maths") parsed=tryMathsValidate(parsed);
+      // Option 1: double-pass AI validation for English & NVR
+      if(subId==="english"||subId==="nvr"){
+        setGenError("double-checking");
+        parsed=await doublePassValidate(apiKeyRef.current,parsed);
+        setGenError("");
+      }
       if(parsed.question) prevRef.current=prevRef.current.concat([parsed.question]).slice(-20);
       setQ(parsed);
       if(parsed.type==="writing") recordScore(0,parsed);
