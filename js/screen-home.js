@@ -73,7 +73,8 @@ function HomeScreen(p){
       React.createElement("span",{style:{color:BORDER,margin:"0 8px"}},"|"),
       React.createElement("span",{style:{color:MUTED,fontSize:"11px"}},"All data stored on this device only"),
       React.createElement("br"),
-      React.createElement("span",{style:{color:BORDER,fontSize:"10px",marginTop:"4px",display:"block"}},"© 2026 Kaulsays Consulting")
+      React.createElement("span",{style:{color:BORDER,fontSize:"10px",marginTop:"4px",display:"block"}},"© 2026 Kaulsays Consulting"),
+      React.createElement("a",{href:"mailto:Kaul.Says+G.Ace@gmail.com",style:{color:MUTED,fontSize:"10px",textDecoration:"none",display:"block",marginTop:"2px"}},"Kaul.Says+G.Ace@gmail.com")
     )
   );
 }
