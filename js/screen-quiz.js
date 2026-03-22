@@ -15,7 +15,7 @@ function QuestionScreen(p){
   }
   return React.createElement("div",{style:{padding:"14px",maxWidth:"480px",margin:"0 auto",animation:"fadeIn .25s ease"}},
     React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}},
-      React.createElement("button",{onClick:p.onExit,style:{background:"none",border:"1px solid "+BORDER,color:MUTED,borderRadius:"8px",padding:"5px 11px",fontSize:"12px",fontWeight:"600",cursor:"pointer"}},"Exit"),
+      React.createElement("button",{onClick:p.onExit,style:{background:"none",border:"1px solid "+BORDER,color:MUTED,borderRadius:"8px",padding:"5px 11px",fontSize:"12px",fontWeight:"600",cursor:"pointer"}},"🏠 Home"),
       React.createElement("div",{style:{display:"flex",gap:"8px",alignItems:"center"}},
         p.cStreak>=3&&React.createElement("span",{style:{background:"rgba(255,159,28,.18)",color:ORANGE,borderRadius:"20px",padding:"2px 9px",fontSize:"12px",fontWeight:"800"}},"🔥 "+p.cStreak),
         p.timed&&!p.answered&&!isW&&React.createElement("div",{style:{width:"38px",height:"38px",borderRadius:"50%",border:"3px solid "+(p.timer<=10?RED:TEAL),display:"flex",alignItems:"center",justifyContent:"center",color:p.timer<=10?RED:WHITE,fontWeight:"900",fontSize:"13px"}},p.timer),

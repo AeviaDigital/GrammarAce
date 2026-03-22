@@ -18,7 +18,7 @@ function App(){
   var totSt=React.useState(0),          total=totSt[0],      setTotal=totSt[1];
   var badgSt=React.useState([]),        badges=badgSt[0],    setBadges=badgSt[1];
   var cntSt=React.useState({maths:0,english:0,nvr:0,writing:0,spelling:0,typing:0}),counts=cntSt[0],setCounts=cntSt[1];
-  var diffSt=React.useState("year5"),   diff=diffSt[0],      setDiff=diffSt[1];
+  var diffSt=React.useState(""),        diff=diffSt[0],      setDiff=diffSt[1];
   var qSt=React.useState(null),         q=qSt[0],            setQ=qSt[1];
   var ldSt=React.useState(false),       loading=ldSt[0],     setLoading=ldSt[1];
   var errSt=React.useState(""),         genError=errSt[0],   setGenError=errSt[1];
@@ -41,7 +41,7 @@ function App(){
 
   var apiKeyRef=React.useRef(apiKey);
   var profRef=React.useRef(profile);
-  var diffRef=React.useRef(diff);
+  var diffRef=React.useRef(diff);  // starts as ""
   var modeRef=React.useRef(mode);
   var subjRef=React.useRef(subject);
   var topicRef=React.useRef(topic);
@@ -67,7 +67,7 @@ function App(){
     histRef.current=loadHistory(profile.id);
     var px=d.xp||0, pt=d.total||0, pb=d.badges||[];
     var pc=d.counts||{maths:0,english:0,nvr:0,writing:0,spelling:0,typing:0};
-    var pd=d.diff||"year5";
+    var pd=d.diff||"";
     setXp(px); xpRef.current=px;
     setTotal(pt); totRef.current=pt;
     setStreak(d.streak||0);
@@ -236,6 +236,7 @@ function App(){
   }
 
   function startSession(sub,m){
+    if(!diffRef.current){ alert("Please select a year group first."); return; }
     setSubject(sub); subjRef.current=sub;
     setMode(m); modeRef.current=m;
     setSessCor(0); scRef.current=0; setSessXP(0);
@@ -279,10 +280,15 @@ function App(){
       onDiff:function(d){setDiff(d);diffRef.current=d;persist({diff:d});},
       onGo:setScreen,
       onSwitch:function(){localStorage.removeItem("ga_active_user");setProfile(null);},
-      onChangeKey:function(){localStorage.removeItem("ga_groq_key");setApiKey("");}
+      onChangeKey:function(){localStorage.removeItem("ga_groq_key");setApiKey("");},
+      onNeedYear:function(){
+        var el=document.getElementById("year-group-section");
+        if(el) el.scrollIntoView({behavior:"smooth"});
+      }
     }),
     screen==="subjects"&&React.createElement(SubjectsScreen,{
       onBack:function(){setScreen("home");},
+      onHome:function(){setScreen("home");},
       onPick:function(s){
         setSubject(s); subjRef.current=s;
         if(s.id==="spelling"){ setScreen("spelling"); }
@@ -293,6 +299,7 @@ function App(){
     screen==="modes"&&React.createElement(ModesScreen,{
       subject:subject,
       onBack:function(){setScreen("subjects");},
+      onHome:function(){setScreen("home");},
       onPick:function(m){startSession(subject,m);},
       onCustomPrompt:function(){setPendingMode(MODES[0]);setScreen("customprompt");}
     }),
