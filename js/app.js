@@ -64,15 +64,31 @@ function App(){
   diffRef.current=diff; modeRef.current=mode;
   subjRef.current=subject; topicRef.current=topic;
 
-  // beforeunload: prompt user to export before leaving
+  // beforeunload: only show warning when actually closing/refreshing the browser
+  // Uses a flag - navigation within the app sets it to false first
+  var isLeavingRef=React.useRef(false);
   React.useEffect(function(){
+    // Set flag true briefly on all link/button clicks that navigate away from the site
     function handleBeforeUnload(e){
+      if(isLeavingRef.current) return; // internal navigation - skip
       e.preventDefault();
-      e.returnValue="Have you exported your GrammarAce data? Closing the browser without exporting may result in data loss if you clear your cache.";
+      e.returnValue="Have you exported your GrammarAce data? Closing without exporting may lose data if you clear your cache.";
       return e.returnValue;
     }
     window.addEventListener("beforeunload",handleBeforeUnload);
-    return function(){window.removeEventListener("beforeunload",handleBeforeUnload);};
+    // Mark as internal navigation when Privacy Policy link or any anchor is clicked
+    function handleClick(e){
+      var a=e.target.closest("a[href]");
+      if(a&&a.href&&a.href.indexOf(window.location.hostname)>=0){
+        isLeavingRef.current=true;
+        setTimeout(function(){isLeavingRef.current=false;},500);
+      }
+    }
+    document.addEventListener("click",handleClick);
+    return function(){
+      window.removeEventListener("beforeunload",handleBeforeUnload);
+      document.removeEventListener("click",handleClick);
+    };
   },[]);
 
   React.useEffect(function(){
@@ -96,8 +112,10 @@ function App(){
     return function(){clearTimeout(timerRef.current);};
   },[timer,timerOn]);
 
+  // Burner profiles don't write to localStorage - state lives in memory only
+  function isBurner(){ return profRef.current&&profRef.current.type==="burner"; }
   function persist(ex){
-    if(!profRef.current) return;
+    if(!profRef.current||isBurner()) return;
     saveProgress(profRef.current.id,Object.assign({xp:xpRef.current,total:totRef.current,streak:streak,badges:badRef.current,counts:cntRef.current,diff:diffRef.current},ex||{}));
   }
   function showToast(b){setToast(b);setTimeout(function(){setToast(null);},3500);}
@@ -149,7 +167,8 @@ function App(){
         writingScore:null
       };
       var nh=histRef.current.concat([entry]);
-      histRef.current=nh; saveHistory(profRef.current.id,nh);
+      histRef.current=nh;
+      if(!isBurner()) saveHistory(profRef.current.id,nh);
     }
     persist({xp:newXp,total:newT,badges:earned});
   }
@@ -160,7 +179,8 @@ function App(){
     if(last.type==="writing"){
       var updated=Object.assign({},last,{studentAnswer:studentAnswer,writingFeedback:fb,writingScore:fb.score!=null?fb.score:null,correct:true});
       var nh=histRef.current.slice(0,-1).concat([updated]);
-      histRef.current=nh; saveHistory(profRef.current.id,nh);
+      histRef.current=nh;
+      if(!isBurner()) saveHistory(profRef.current.id,nh);
     }
   }
 
@@ -174,7 +194,7 @@ function App(){
       yearId:diffRef.current,
       subjectId:subjRef.current?subjRef.current.id:"writing"
     };
-    addPaused(profRef.current.id,paused);
+    if(!isBurner()) addPaused(profRef.current.id,paused);
     setScreen("home");
   }
 
@@ -347,7 +367,20 @@ function App(){
   // ── RENDER ──────────────────────────────────────────────────────────────────
   if(!apiKey) return React.createElement(ApiKeyScreen,{onSave:function(k){setApiKey(k);}});
   if(!profile){
-    if(profView==="create") return React.createElement(ProfileCreate,{onBack:function(){setProfView("select");},onCreated:function(pr){setProfile(pr);setProfView("select");}});
+    if(profView==="create") return React.createElement(ProfileCreate,{
+      onBack:function(){setProfView("select");},
+      onCreated:function(pr){
+        // Burner profiles: don't persist to localStorage, just set in state
+        if(pr.type==="burner"){
+          // Give burner a session-only id - not saved to ga_profiles
+          setProfile(pr);
+          setProfView("select");
+        } else {
+          setProfile(pr);
+          setProfView("select");
+        }
+      }
+    });
     // Backup reminder banner
     if(showBackup) return React.createElement("div",{style:{background:BG,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px"}},
       React.createElement("div",{style:{maxWidth:"420px",width:"100%",background:CARD,border:"1px solid "+ORANGE+"55",borderRadius:"16px",padding:"24px",textAlign:"center"}},

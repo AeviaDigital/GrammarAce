@@ -106,7 +106,7 @@ function DashboardScreen(p){
     React.createElement("div",{style:cs({marginBottom:"10px",background:"rgba(6,214,160,.05)",border:"1px solid "+TEAL+"44"})},
       React.createElement("p",{style:{color:TEAL,fontSize:"12px",fontWeight:"800",margin:"0 0 8px"}},"📦 Backup Your Data"),
       React.createElement("p",{style:{color:MUTED,fontSize:"11px",lineHeight:"1.6",margin:"0 0 10px"}},"Clearing your browser cookies or cache will permanently delete all profiles and progress. Export regularly to keep a backup."),
-      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}},
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"8px"}},
         React.createElement("button",{
           onClick:function(){exportProfile(p.profile.id,p.profile.name);},
           style:bs("linear-gradient(135deg,"+TEAL+","+BLUE+")",{width:"100%",color:WHITE,fontSize:"12px",padding:"10px"})
@@ -117,7 +117,23 @@ function DashboardScreen(p){
           },
           style:bs(CARD,{width:"100%",border:"1px solid "+TEAL,color:TEAL,fontSize:"12px",padding:"10px"})
         },"📦 Export All Profiles")
-      )
+      ),
+      React.createElement("button",{
+        onClick:function(){
+          if(!window.confirm("Are you sure you want to delete all data for "+p.profile.name+"?\n\nThis includes all progress, history, badges and paused prompts.")) return;
+          if(!window.confirm("This CANNOT be undone. There is no way to recover this data once deleted.\n\nHave you exported a backup first?\n\nTap OK to permanently delete.")) return;
+          try{
+            ["progress","history","paused"].forEach(function(k){localStorage.removeItem("ga_"+p.profile.id+"_"+k);});
+            localStorage.removeItem("ga_typing_"+p.profile.id);
+            var prs=JSON.parse(localStorage.getItem("ga_profiles")||"[]").filter(function(pr){return pr.id!==p.profile.id;});
+            localStorage.setItem("ga_profiles",JSON.stringify(prs));
+            localStorage.removeItem("ga_active_user");
+          }catch(e){}
+          p.onBack();
+          window.location.reload();
+        },
+        style:bs(CARD,{width:"100%",border:"1px solid "+RED,color:RED,fontSize:"12px",padding:"10px"})
+      },"🗑️ Delete My Data Permanently")
     ),
     React.createElement("div",{style:cs({marginBottom:"10px",background:"rgba(239,68,68,.05)",border:"1px solid #EF444433"})},
       React.createElement("p",{style:{color:RED,fontSize:"12px",fontWeight:"800",margin:"0 0 6px"}},"⚠️ Important: Data Loss Warning"),
