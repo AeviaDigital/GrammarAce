@@ -91,14 +91,14 @@ var PRONOUN_WORDS={
 
 // ── TYPING LESSONS ────────────────────────────────────────────────────────────
 var TYPING_LESSONS=[
-  {id:"homerow", name:"Home Row",       text:"add a fad ask lad fall glad flask salad glass hall all saga glad flask half lad",       tip:"Fingers rest on A S D F J K L — never lift your wrists"},
-  {id:"toprow",  name:"Top Row",        text:"we were quite proper your youth pepper tower wrote quiet wore wire quit power tower",   tip:"Reach up from home row — return fingers after each key"},
-  {id:"botrow",  name:"Bottom Row",     text:"zinc exam cave bench move name combine brave next vex box cancel venue maze mix",        tip:"Reach down — keep other fingers anchored on home row"},
-  {id:"caps",    name:"Capital Letters",text:"Alan finds Jack. Kate said Hello. Dogs Run Fast. Every Friday. Santa Claus.",           tip:"Use the OPPOSITE Shift key to the finger typing the letter"},
-  {id:"numbers", name:"Numbers",        text:"Call 999 for emergencies. Score 10 out of 10. Year 2026. Room 42. Level 7 of 8.",      tip:"Reach up from top row — return fingers immediately"},
-  {id:"words",   name:"Common Words",   text:"the and that have from they what this with will your about which when there their",    tip:"Practise rhythm — common words should feel automatic"},
-  {id:"vocab",   name:"11+ Vocabulary", text:"necessary beginning separate committee environment immediately recommend conscience",    tip:"Build speed on harder words used in exams"},
-  {id:"passage", name:"Full Passage",   text:"The ability to communicate clearly is one of the most important skills a person can develop. Precision and confidence will always be valued.",tip:"Accuracy first — aim for 95% before focusing on speed"}
+  {id:"homerow", name:"Home Row",        minYear:1, text:"add a fad ask lad fall glad flask salad glass hall all saga glad flask half lad",      tip:"Fingers rest on A S D F J K L — never lift your wrists"},
+  {id:"toprow",  name:"Top Row",         minYear:1, text:"we were quite top row pet our two were eye pot wire tower pop quit power",              tip:"Reach up from home row — return fingers after each key"},
+  {id:"botrow",  name:"Bottom Row",      minYear:1, text:"cab van box mix new jam cab van fox ban nab vim cab jam mix van box ban",               tip:"Reach down — keep other fingers anchored on home row"},
+  {id:"caps",    name:"Capital Letters", minYear:3, text:"Alan finds Jack. Kate said Hello. Dogs Run Fast. Every Friday. Santa Claus.",           tip:"Use the OPPOSITE Shift key to the finger typing the letter"},
+  {id:"numbers", name:"Numbers",         minYear:3, text:"I have 2 cats and 3 dogs. Room 4 is on floor 5. Call 999 for help. Score 10 of 10.",   tip:"Reach up from top row — return fingers immediately"},
+  {id:"words",   name:"Common Words",    minYear:3, text:"the and that have from they what this with will your about which when there their",     tip:"Practise rhythm — common words should feel automatic"},
+  {id:"vocab",   name:"11+ Vocabulary",  minYear:5, text:"necessary beginning separate committee environment immediately recommend conscience",    tip:"Build speed on harder words used in exams"},
+  {id:"passage", name:"Full Passage",    minYear:5, text:"The ability to communicate clearly is one of the most important skills a person can develop. Precision and confidence will always be valued.",tip:"Accuracy first — aim for 95% before focusing on speed"}
 ];
 
 // ── FALLBACK QUESTIONS ────────────────────────────────────────────────────────

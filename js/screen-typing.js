@@ -106,6 +106,13 @@ function KeyboardDiagram(p){
   );
 }
 
+// ── YEAR NUMBER HELPER ───────────────────────────────────────────────────────
+function yearNum(yearId){
+  if(!yearId) return 5;
+  var m=yearId.match(/(\d+)/);
+  return m?parseInt(m[1]):5;
+}
+
 // ── TYPING TUTOR SCREEN ───────────────────────────────────────────────────────
 function TypingTutorScreen(p){
   var hasKeyboard=(function(){
@@ -200,22 +207,50 @@ function TypingTutorScreen(p){
       React.createElement("p",{style:{color:GOLD,fontSize:"12px",fontWeight:"800",margin:"0 0 4px"}},"How to use"),
       React.createElement("p",{style:{color:MUTED,fontSize:"11px",lineHeight:"1.6",margin:0}},"Work through lessons in order. Aim for 95%+ accuracy before focusing on speed. Your best WPM and accuracy are saved per lesson.")
     ),
-    TYPING_LESSONS.map(function(ls,i){
-      var prog2=progress[ls.id];
-      var done=prog2&&prog2.attempts>0;
-      return React.createElement("button",{key:ls.id,onClick:function(){startLesson(ls);},style:cs({display:"flex",alignItems:"center",gap:"12px",textAlign:"left",marginBottom:"8px",width:"100%",cursor:"pointer",border:"1px solid "+(done?GOLD+"44":BORDER),padding:"12px 14px"})},
-        React.createElement("div",{style:{width:"36px",height:"36px",borderRadius:"10px",background:done?"rgba(255,209,102,.15)":BORDER,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"14px",fontWeight:"900",color:done?GOLD:MUTED,flexShrink:0}},i+1),
-        React.createElement("div",{style:{flex:1}},
-          React.createElement("div",{style:{color:WHITE,fontWeight:"700",fontSize:"13px"}},ls.name),
-          React.createElement("div",{style:{color:MUTED,fontSize:"11px",marginTop:"2px"}},ls.tip)
+    (function(){
+      var userYear=yearNum(p.yearId);
+      var availCount=TYPING_LESSONS.filter(function(ls){return userYear>=ls.minYear;}).length;
+      return React.createElement("div",null,
+        userYear<3&&React.createElement("p",{style:{color:ORANGE,fontSize:"11px",lineHeight:"1.5",margin:"0 0 10px",background:"rgba(255,159,28,.07)",border:"1px solid "+ORANGE+"44",borderRadius:"10px",padding:"8px 12px"}},
+          "Starting with keyboard basics. More lessons unlock from Year 3 onwards."
         ),
-        done&&React.createElement("div",{style:{textAlign:"right",flexShrink:0}},
-          React.createElement("div",{style:{color:GOLD,fontSize:"12px",fontWeight:"800"}},prog2.bestWpm+" WPM"),
-          React.createElement("div",{style:{color:TEAL,fontSize:"10px"}},prog2.bestAcc+"%")
+        userYear>=3&&userYear<5&&React.createElement("p",{style:{color:TEAL,fontSize:"11px",lineHeight:"1.5",margin:"0 0 10px",background:"rgba(6,214,160,.07)",border:"1px solid "+TEAL+"44",borderRadius:"10px",padding:"8px 12px"}},
+          "11+ vocabulary and full passage lessons unlock from Year 5."
         ),
-        !done&&React.createElement("span",{style:{color:MUTED,fontSize:"11px",flexShrink:0}},"Not started")
+        TYPING_LESSONS.map(function(ls,i){
+          var prog2=progress[ls.id];
+          var done=prog2&&prog2.attempts>0;
+          var locked=userYear<ls.minYear;
+          return React.createElement("button",{
+            key:ls.id,
+            onClick:function(){if(!locked)startLesson(ls);},
+            style:cs({display:"flex",alignItems:"center",gap:"12px",textAlign:"left",marginBottom:"8px",width:"100%",
+              cursor:locked?"not-allowed":"pointer",
+              border:"1px solid "+(locked?BORDER+"55":done?GOLD+"44":BORDER),
+              padding:"12px 14px",opacity:locked?0.45:1})
+          },
+            React.createElement("div",{style:{width:"36px",height:"36px",borderRadius:"10px",
+              background:locked?BORDER+"44":done?"rgba(255,209,102,.15)":BORDER,
+              display:"flex",alignItems:"center",justifyContent:"center",
+              fontSize:locked?"16px":"14px",fontWeight:"900",
+              color:locked?MUTED:done?GOLD:MUTED,flexShrink:0}},
+              locked?"🔒":i+1
+            ),
+            React.createElement("div",{style:{flex:1}},
+              React.createElement("div",{style:{color:locked?MUTED:WHITE,fontWeight:"700",fontSize:"13px"}},ls.name),
+              React.createElement("div",{style:{color:MUTED,fontSize:"11px",marginTop:"2px"}},
+                locked?"Unlocks from Year "+ls.minYear:ls.tip
+              )
+            ),
+            !locked&&done&&React.createElement("div",{style:{textAlign:"right",flexShrink:0}},
+              React.createElement("div",{style:{color:GOLD,fontSize:"12px",fontWeight:"800"}},prog2.bestWpm+" WPM"),
+              React.createElement("div",{style:{color:TEAL,fontSize:"10px"}},prog2.bestAcc+"%")
+            ),
+            !locked&&!done&&React.createElement("span",{style:{color:MUTED,fontSize:"11px",flexShrink:0}},"Not started")
+          );
+        })
       );
-    })
+    })()
   );
 
   if(view==="lesson"&&lesson) return React.createElement("div",{style:{padding:"18px",maxWidth:"580px",margin:"0 auto",animation:"fadeIn .25s ease"}},

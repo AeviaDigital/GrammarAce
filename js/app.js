@@ -507,6 +507,7 @@ function App(){
     }),
     screen==="typing"&&React.createElement(TypingTutorScreen,{
       userId:profile.id,
+      yearId:diff,
       onBack:function(){setScreen("subjects");},
       onFinish:function(){
         var sub=subjRef.current||SUBJECTS.find(function(s){return s.id==="typing";});
