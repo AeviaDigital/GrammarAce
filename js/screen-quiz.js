@@ -1,13 +1,62 @@
 
+// ── WRITTEN ANSWER (GL "Standard Format") ─────────────────────────────────────
+function WrittenAnswerBlock(p){
+  var q=p.q;
+  var tSt=React.useState(""), text=tSt[0], setText=tSt[1];
+  var isCorrect=p.answered&&checkWrittenAnswer(p.sel,q);
+  var timedOut=p.answered&&p.sel===-1;
+  return React.createElement("div",null,
+    !p.answered&&React.createElement("button",{onClick:p.onHint,style:{background:"none",border:"1px dashed "+PURPLE,color:PURPLE,borderRadius:"10px",padding:"7px 13px",fontSize:"12px",fontWeight:"700",cursor:"pointer",marginBottom:"12px",display:"block",textAlign:"left",width:"100%",lineHeight:"1.5"}},p.hintShown?("💡 "+(q.hint||"")):"💡 Need a hint? Tap to reveal"),
+    !p.answered&&React.createElement("div",{style:cs({marginBottom:"12px"})},
+      React.createElement("label",{style:{color:MUTED,fontSize:"11px",fontWeight:"700",display:"block",marginBottom:"6px"}},"Write your answer in the box (GL Standard Format):"),
+      React.createElement("input",{
+        type:"text",value:text,autoFocus:true,
+        onChange:function(e){setText(e.target.value);},
+        onKeyDown:function(e){if(e.key==="Enter"&&text.trim())p.onSubmit(text);},
+        placeholder:"Type your answer…",
+        style:{width:"100%",background:BG,border:"1px solid "+BORDER,borderRadius:"10px",padding:"12px",color:WHITE,fontSize:"15px",fontWeight:"700",display:"block"}
+      }),
+      React.createElement("button",{onClick:function(){if(text.trim())p.onSubmit(text);},disabled:!text.trim(),style:Object.assign(bs("linear-gradient(135deg,"+GOLD+","+ORANGE+")",{width:"100%",color:BG,fontSize:"14px",padding:"12px",marginTop:"10px"}),!text.trim()?{opacity:0.4,cursor:"default"}:{})},"Submit Answer")
+    ),
+    p.answered&&React.createElement("div",null,
+      React.createElement("div",{style:cs({marginBottom:"10px",border:"1px solid "+BORDER})},
+        React.createElement("div",{style:{color:MUTED,fontSize:"10px",fontWeight:"700",marginBottom:"4px"}},"YOUR ANSWER"),
+        React.createElement("div",{style:{color:WHITE,fontSize:"14px",fontWeight:"700"}},timedOut?"(no answer — time ran out)":('"'+p.sel+'"'))
+      ),
+      React.createElement("div",{style:Object.assign(cs({marginBottom:"12px"}),{border:"1px solid "+(isCorrect?TEAL:RED),background:isCorrect?"rgba(6,214,160,.06)":"rgba(239,68,68,.06)"})},
+        React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}},
+          React.createElement("span",{style:{fontSize:"18px"}},isCorrect?"🎉":timedOut?"⏰":"💭"),
+          React.createElement("span",{style:{color:isCorrect?TEAL:RED,fontWeight:"900",fontSize:"14px"}},isCorrect?"Correct!":"Not quite — the answer was \""+q.correctAnswer+"\"")
+        ),
+        React.createElement("p",{style:{color:WHITE,fontSize:"12px",lineHeight:"1.65",margin:0}},q.explanation)
+      ),
+      React.createElement("div",{style:{display:"flex",alignItems:"flex-start",gap:"7px",padding:"8px 10px",background:"rgba(107,122,158,.07)",borderRadius:"10px",marginBottom:"8px",border:"1px solid "+BORDER}},
+        React.createElement("span",{style:{fontSize:"13px",flexShrink:0,marginTop:"1px"}},"⚠️"),
+        React.createElement("p",{style:{color:MUTED,fontSize:"10px",lineHeight:"1.6",margin:0}},"Answer matching is automatic and may occasionally mark a correctly-worded answer wrong (e.g. an unexpected phrasing). Check the explanation if a mark looks off.")
+      ),
+      React.createElement("button",{onClick:p.onNext,style:bs("linear-gradient(135deg,"+GOLD+","+ORANGE+")",{width:"100%",color:BG,fontSize:"14px",padding:"13px"})},p.qNum>=p.qTotal?"See My Results":"Next Question")
+    )
+  );
+}
+
 // ── QUESTION SCREEN ───────────────────────────────────────────────────────────
 function QuestionScreen(p){
   var q=p.q;
   var isW=q&&q.type==="writing";
+  var isWritten=q&&q.type==="written";
+  var isVisual=q&&q.visual;
   var isOk=p.answered&&q&&p.sel===q.correctIndex;
   var stage=STAGE_MAP[p.yearId]||"";
   var subj=SUBJECTS.find(function(s){return s.id===p.subjectId;})||SUBJECTS[0];
   function optStyle(i){
     var base={background:CARD,border:"2px solid "+BORDER,borderRadius:"12px",padding:"11px 14px",textAlign:"left",cursor:p.answered?"default":"pointer",color:WHITE,fontSize:"13px",fontWeight:"600",width:"100%",marginBottom:"8px",display:"block",transition:"all .15s"};
+    if(!p.answered) return base;
+    if(i===q.correctIndex) return Object.assign({},base,{background:"rgba(6,214,160,.12)",borderColor:TEAL});
+    if(i===p.sel&&i!==q.correctIndex) return Object.assign({},base,{background:"rgba(239,68,68,.12)",borderColor:RED});
+    return Object.assign({},base,{opacity:0.4});
+  }
+  function svgOptStyle(i){
+    var base={background:CARD,border:"2px solid "+BORDER,borderRadius:"12px",padding:"10px",cursor:p.answered?"default":"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:"4px",transition:"all .15s",position:"relative"};
     if(!p.answered) return base;
     if(i===q.correctIndex) return Object.assign({},base,{background:"rgba(6,214,160,.12)",borderColor:TEAL});
     if(i===p.sel&&i!==q.correctIndex) return Object.assign({},base,{background:"rgba(239,68,68,.12)",borderColor:RED});
@@ -54,15 +103,43 @@ function QuestionScreen(p){
         onSkip:p.onFinish,
         onDone:p.onFinish
       }),
-      !isW&&React.createElement("div",null,
+      isWritten&&React.createElement(WrittenAnswerBlock,{
+        q:q,answered:p.answered,sel:p.sel,hintShown:p.hintShown,
+        onHint:p.onHint,onSubmit:p.onWrittenAnswer,onNext:p.onNext,
+        qNum:p.qNum,qTotal:p.qTotal
+      }),
+      (!isW&&!isWritten)&&React.createElement("div",null,
         !p.answered&&React.createElement("button",{onClick:p.onHint,style:{background:"none",border:"1px dashed "+PURPLE,color:PURPLE,borderRadius:"10px",padding:"7px 13px",fontSize:"12px",fontWeight:"700",cursor:"pointer",marginBottom:"12px",display:"block",textAlign:"left",width:"100%",lineHeight:"1.5"}},p.hintShown?("💡 "+(q.hint||"")):"💡 Need a hint? Tap to reveal"),
-        (q.options||[]).map(function(opt,i){
-          return React.createElement("button",{key:i,onClick:function(){if(!p.answered)p.onAnswer(i);},style:optStyle(i)},
-            opt,
-            p.answered&&i===q.correctIndex&&React.createElement("span",{style:{float:"right",color:TEAL,fontWeight:"900"}},"✓ Correct"),
-            p.answered&&i===p.sel&&i!==q.correctIndex&&React.createElement("span",{style:{float:"right",color:RED,fontWeight:"900"}},"✗ Your answer")
-          );
-        }),
+        isVisual&&q.displaySvgs&&React.createElement("div",{style:cs({marginBottom:"14px",textAlign:"center"})},
+          React.createElement("div",{style:{color:MUTED,fontSize:"10px",fontWeight:"700",marginBottom:"10px"}},q.kind==="mirror"?"ORIGINAL SHAPE":"PATTERN SO FAR"),
+          q.displayIsHtml
+            ?React.createElement("div",{dangerouslySetInnerHTML:{__html:q.displaySvgs[0]}})
+            :React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",gap:"8px",flexWrap:"wrap"}},
+                q.displaySvgs.map(function(svg,i){
+                  return React.createElement(React.Fragment,{key:i},
+                    React.createElement("div",{style:{width:"56px",height:"56px"},dangerouslySetInnerHTML:{__html:svg}}),
+                    i<q.displaySvgs.length-1&&React.createElement("span",{style:{color:MUTED,fontSize:"16px"}},"→")
+                  );
+                }).concat(q.kind==="rotation"?[React.createElement("span",{key:"arrow-end",style:{color:MUTED,fontSize:"16px"}},"→"),React.createElement("div",{key:"q-mark",style:{width:"56px",height:"56px",display:"flex",alignItems:"center",justifyContent:"center",border:"2px dashed "+MUTED,borderRadius:"8px",color:MUTED,fontSize:"22px",fontWeight:"900"}},"?")]:[])
+              )
+        ),
+        isVisual
+          ?React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"12px"}},
+              (q.optionsSvg||[]).map(function(svg,i){
+                return React.createElement("button",{key:i,onClick:function(){if(!p.answered)p.onAnswer(i);},style:svgOptStyle(i)},
+                  React.createElement("div",{style:{width:"64px",height:"64px"},dangerouslySetInnerHTML:{__html:svg}}),
+                  p.answered&&i===q.correctIndex&&React.createElement("span",{style:{color:TEAL,fontWeight:"900",fontSize:"11px"}},"✓ Correct"),
+                  p.answered&&i===p.sel&&i!==q.correctIndex&&React.createElement("span",{style:{color:RED,fontWeight:"900",fontSize:"11px"}},"✗ Your answer")
+                );
+              })
+            )
+          :(q.options||[]).map(function(opt,i){
+              return React.createElement("button",{key:i,onClick:function(){if(!p.answered)p.onAnswer(i);},style:optStyle(i)},
+                opt,
+                p.answered&&i===q.correctIndex&&React.createElement("span",{style:{float:"right",color:TEAL,fontWeight:"900"}},"✓ Correct"),
+                p.answered&&i===p.sel&&i!==q.correctIndex&&React.createElement("span",{style:{float:"right",color:RED,fontWeight:"900"}},"✗ Your answer")
+              );
+            }),
         p.answered&&React.createElement("div",{style:Object.assign(cs({marginBottom:"12px"}),{border:"1px solid "+(isOk?TEAL:RED),background:isOk?"rgba(6,214,160,.06)":"rgba(239,68,68,.06)"})},
           React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}},
             React.createElement("span",{style:{fontSize:"18px"}},isOk?"🎉":p.sel===-1?"⏰":"💭"),
@@ -72,7 +149,7 @@ function QuestionScreen(p){
         ),
         React.createElement("div",{style:{display:"flex",alignItems:"flex-start",gap:"7px",padding:"8px 10px",background:"rgba(107,122,158,.07)",borderRadius:"10px",marginBottom:"8px",border:"1px solid "+BORDER}},
           React.createElement("span",{style:{fontSize:"13px",flexShrink:0,marginTop:"1px"}},"⚠️"),
-          React.createElement("p",{style:{color:MUTED,fontSize:"10px",lineHeight:"1.6",margin:0}},"Questions and answers are AI-generated and may occasionally contain errors. Parents and teachers should check regularly for accuracy.")
+          React.createElement("p",{style:{color:MUTED,fontSize:"10px",lineHeight:"1.6",margin:0}},isVisual?"These shapes are generated by code, not AI, so the correct answer is guaranteed accurate.":"Questions and answers are AI-generated and may occasionally contain errors. Parents and teachers should check regularly for accuracy.")
         ),
         p.answered&&React.createElement("button",{onClick:p.onNext,style:bs("linear-gradient(135deg,"+GOLD+","+ORANGE+")",{width:"100%",color:BG,fontSize:"14px",padding:"13px"})},p.qNum>=p.qTotal?"See My Results":"Next Question")
       )

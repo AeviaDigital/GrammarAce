@@ -16,7 +16,7 @@ async function callGroq(apiKey,prompt){
 }
 
 // ── PROMPT BUILDERS ───────────────────────────────────────────────────────────
-function buildPrompt(subj,topic,yearId,prevQs){
+function buildPrompt(subj,topic,yearId,prevQs,answerFormat){
   var yr=YEAR_LABEL[yearId]||YEAR_LABEL.year5;
   var seed=Math.floor(Math.random()*99999);
   var avoid=prevQs.length>0?" Do NOT repeat: "+prevQs.slice(-3).map(function(q){return '"'+q+'"';}).join(", ")+".":"";
@@ -24,7 +24,34 @@ function buildPrompt(subj,topic,yearId,prevQs){
     return "You are a UK exam question writer. Create one creative writing task for "+yr+". Topic: "+topic+". Seed:"+seed+avoid+"\nRespond with ONLY a valid JSON object, no markdown:\n{\"question\":\"2-3 sentence writing prompt\",\"type\":\"writing\",\"guidance\":[\"tip1\",\"tip2\",\"tip3\"],\"modelAnswer\":\"strong 2-sentence example opening\",\"explanation\":\"what 11+ examiners look for\",\"hint\":\"one key technique\",\"topic\":\""+topic+"\"}";
   }
   var sn=subj==="nvr"?"Non-Verbal Reasoning (text-based: sequences, codes, analogies only)":subj==="english"?"English and Verbal Reasoning":"Mathematics";
+  if(answerFormat==="written"&&(subj==="maths"||subj==="english")){
+    // GL Assessment "Standard Format": the child writes their own short answer
+    // into a box rather than picking from options.
+    return "You are a UK exam question writer, writing in the style of GL Assessment's 'Standard Format' papers (the child writes their own answer, not multiple choice). Create one "+sn+" question for "+yr+". Topic: "+topic+". Seed:"+seed+avoid+"\n\nSTEP 1 — Work out the correct answer yourself first, showing your working.\nSTEP 2 — The correct answer must be SHORT: a single number, word, or short phrase (no more than a few words) — something a child could write in a small answer box.\nSTEP 3 — List 2-3 acceptableAnswers covering reasonable alternative phrasings or formats (e.g. \"12\" and \"twelve\"; do not include the question text itself as an acceptable answer).\nSTEP 4 — Write the explanation showing the correct working and stating the correct answer clearly.\n\nCRITICAL RULES:\n- Do NOT provide multiple-choice options — this is a written-answer format\n- The correctAnswer must be short enough to type into a small text box\n- For "+yr+" difficulty — keep arithmetic simple and age-appropriate\n\nRespond with ONLY a valid JSON object, no markdown, no preamble:\n{\"question\":\"question text\",\"type\":\"written\",\"correctAnswer\":\"short answer\",\"acceptableAnswers\":[\"alt1\",\"alt2\"],\"explanation\":\"full working and the correct answer restated\",\"hint\":\"hint without giving answer\",\"topic\":\""+topic+"\"}";
+  }
   return "You are a UK exam question writer. Create one "+sn+" multiple choice question for "+yr+". Topic: "+topic+". Seed:"+seed+avoid+"\n\nSTEP 1 — Work out the correct answer yourself first, showing your working.\nSTEP 2 — Write 4 options (A B C D) where exactly one is correct.\nSTEP 3 — Set correctIndex to match the correct option (0=A, 1=B, 2=C, 3=D).\nSTEP 4 — Write the explanation starting with the correct letter, e.g. \"The answer is B) 2 because...\".\nSTEP 5 — Double-check: does your explanation letter match your correctIndex number? If not, fix it before responding.\n\nCRITICAL RULES:\n- correctIndex MUST match the option your explanation identifies as correct\n- For "+yr+" difficulty — keep arithmetic simple and age-appropriate\n- Options must be clearly different from each other\n\nRespond with ONLY a valid JSON object, no markdown, no preamble:\n{\"question\":\"question text\",\"options\":[\"A) ...\",\"B) ...\",\"C) ...\",\"D) ...\"],\"correctIndex\":1,\"explanation\":\"The answer is [LETTER]) [VALUE] because [WORKING]\",\"hint\":\"hint without giving answer\",\"topic\":\""+topic+"\"}";
+}
+
+// ── WRITTEN-ANSWER MATCHING (normalized comparison, no LLM call needed) ───────
+function normalizeAnswer(s){
+  return String(s==null?"":s).toLowerCase().trim().replace(/[.,!?'"£$%]/g,"").replace(/\s+/g," ");
+}
+function checkWrittenAnswer(userText,q){
+  var user=normalizeAnswer(userText);
+  if(!user) return false;
+  var candidates=[q.correctAnswer].concat(q.acceptableAnswers||[]).filter(Boolean).map(normalizeAnswer);
+  if(candidates.indexOf(user)!==-1) return true;
+  // numeric tolerance match — use the RAW text (normalizeAnswer strips periods,
+  // which would break decimal comparisons like "2.5").
+  var userNum=parseFloat(String(userText).trim().replace(/[^0-9.\-]/g,""));
+  if(!isNaN(userNum)){
+    var rawCandidates=[q.correctAnswer].concat(q.acceptableAnswers||[]).filter(Boolean);
+    for(var i=0;i<rawCandidates.length;i++){
+      var candNum=parseFloat(String(rawCandidates[i]).trim().replace(/[^0-9.\-]/g,""));
+      if(!isNaN(candNum)&&Math.abs(candNum-userNum)<0.001) return true;
+    }
+  }
+  return false;
 }
 
 function buildFeedbackPrompt(question,answer,yearId){
@@ -37,6 +64,11 @@ function validateQuestion(p){
   if(!p||typeof p!=="object") throw new Error("Invalid response format");
   if(p.type==="writing") return p;
   if(!p.question) throw new Error("Missing question text");
+  if(p.type==="written"){
+    if(!p.correctAnswer) throw new Error("Missing correctAnswer for written question");
+    if(!Array.isArray(p.acceptableAnswers)) p.acceptableAnswers=[];
+    return p;
+  }
   if(!Array.isArray(p.options)||p.options.length!==4) throw new Error("Expected exactly 4 options");
   var ci=parseInt(p.correctIndex,10);
   if(isNaN(ci)||ci<0||ci>3) throw new Error("Invalid correctIndex: "+p.correctIndex);
@@ -71,29 +103,9 @@ function validateQuestion(p){
   return p;
 }
 
-// ── MATHS ARITHMETIC VALIDATOR (Option 2) ────────────────────────────────────
-function tryMathsValidate(p){
-  // Only attempt if we have a question and 4 numeric-ish options
-  if(!p||!p.question||p.type==="writing") return p;
-  var q=p.question;
-  var opts=p.options;
-
-  // Extract all numbers from an option string e.g. "A) 12" -> 12
-  function optVal(opt){
-    var m=opt.match(/[\d.]+/g);
-    return m?parseFloat(m[0]):null;
-  }
-
-  // Try to find which option index matches a computed answer
-  function matchOpt(answer){
-    if(answer===null||isNaN(answer)) return -1;
-    for(var i=0;i<opts.length;i++){
-      var v=optVal(opts[i]);
-      if(v!==null&&Math.abs(v-answer)<0.001) return i;
-    }
-    return -1;
-  }
-
+// Shared helper: try to compute a numeric answer directly from the question text
+// using a handful of common 11+ arithmetic patterns. Returns null if no pattern matched.
+function computeFromQuestionText(q){
   var computed=null;
 
   // Pattern: "X/Y of N" or "X/Y of N" e.g. "1/2 of 48", "3/4 of 20"
@@ -129,6 +141,47 @@ function tryMathsValidate(p){
     var doubleN=q.match(/(?:double|twice)\s+(\d+)/i);
     if(doubleN) computed=parseInt(doubleN[1])*2;
   }
+  return (computed!==null&&!isNaN(computed))?computed:null;
+}
+
+// ── MATHS ARITHMETIC VALIDATOR (Option 2) ────────────────────────────────────
+function tryMathsValidate(p){
+  // Only attempt if we have a question and either 4 numeric-ish options or a written answer
+  if(!p||!p.question||p.type==="writing") return p;
+  var q=p.question;
+
+  if(p.type==="written"){
+    var computedW=computeFromQuestionText(q);
+    if(computedW!==null){
+      var stated=parseFloat(String(p.correctAnswer).replace(/[^0-9.\-]/g,""));
+      if(isNaN(stated)||Math.abs(stated-computedW)>0.001){
+        console.warn("Maths validator: overriding written correctAnswer from "+p.correctAnswer+" to "+computedW);
+        p.correctAnswer=String(computedW);
+        if(!p.acceptableAnswers) p.acceptableAnswers=[];
+      }
+    }
+    return p;
+  }
+
+  var opts=p.options;
+
+  // Extract all numbers from an option string e.g. "A) 12" -> 12
+  function optVal(opt){
+    var m=opt.match(/[\d.]+/g);
+    return m?parseFloat(m[0]):null;
+  }
+
+  // Try to find which option index matches a computed answer
+  function matchOpt(answer){
+    if(answer===null||isNaN(answer)) return -1;
+    for(var i=0;i<opts.length;i++){
+      var v=optVal(opts[i]);
+      if(v!==null&&Math.abs(v-answer)<0.001) return i;
+    }
+    return -1;
+  }
+
+  var computed=computeFromQuestionText(q);
 
   // If we computed an answer, find matching option
   if(computed!==null&&!isNaN(computed)){
@@ -143,7 +196,7 @@ function tryMathsValidate(p){
 
 // ── DOUBLE-PASS VALIDATOR FOR ENGLISH & NVR (Option 1) ───────────────────────
 async function doublePassValidate(apiKey,p){
-  if(!p||p.type==="writing") return p;
+  if(!p||p.type==="writing"||p.type==="written"||!Array.isArray(p.options)) return p;
   try{
     var prompt="You are checking a multiple choice exam question for accuracy.\n\nQuestion: "+p.question+"\nOptions:\n"+p.options.join("\n")+"\nMarked correct answer: option index "+p.correctIndex+" which is: "+p.options[p.correctIndex]+"\n\nIs this the correct answer? Think carefully.\nReply with ONLY a valid JSON object, no markdown:\n{\"correct\":true}\nOR if wrong:\n{\"correct\":false,\"correctIndex\":1,\"reason\":\"brief reason\"}\ncorrectIndex must be 0=A, 1=B, 2=C, 3=D.";
     var raw=await callGroq(apiKey,prompt);

@@ -23,6 +23,15 @@ var TOPICS={
   writing:["Narrative Story","Descriptive Writing","Character Sketch","Setting Description","Dialogue Writing","Persuasive Letter","Adventure Story","Mystery Story","Nature Writing","Imaginative Scenario"]
 };
 
+// ── ANSWER FORMATS (GL Assessment style) ──────────────────────────────────────
+// GL 11+ papers mix Multiple Choice and "Standard Format" (write your own answer
+// in a box). Only Maths and English support Standard Format here — NVR and
+// Creative Writing keep their existing formats.
+var ANSWER_FORMATS=[
+  {id:"mc",     name:"Multiple Choice", icon:"🔘", desc:"Pick from 4 options — most common 11+ format"},
+  {id:"written",name:"Standard Format", icon:"✏️", desc:"Type your own answer, as used in GL Assessment papers"}
+];
+
 // ── PRACTICE MODES ────────────────────────────────────────────────────────────
 var MODES=[
   {id:"drill",name:"Quick Drill",    icon:"⚡",desc:"10 questions, relaxed pace",      col:"#06D6A0",q:10,timed:false},

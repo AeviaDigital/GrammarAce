@@ -118,6 +118,8 @@ function SubjectsScreen(p){
 // ── MODES SCREEN ──────────────────────────────────────────────────────────────
 function ModesScreen(p){
   var isW=p.subject&&p.subject.id==="writing";
+  var isFormatSubj=p.subject&&(p.subject.id==="maths"||p.subject.id==="english");
+  var isNVR=p.subject&&p.subject.id==="nvr";
   return React.createElement("div",{style:{padding:"18px",maxWidth:"480px",margin:"0 auto",animation:"fadeIn .3s ease"}},
     React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"14px"}},
       React.createElement(BackBtn,{onClick:p.onBack}),
@@ -130,6 +132,33 @@ function ModesScreen(p){
     isW&&React.createElement("div",{style:cs({marginBottom:"14px",background:"rgba(255,159,28,.06)",border:"1px solid "+ORANGE+"44"})},
       React.createElement("p",{style:{color:ORANGE,fontSize:"12px",fontWeight:"800",margin:"0 0 4px"}},"Creative Writing sessions"),
       React.createElement("p",{style:{color:MUTED,fontSize:"11px",lineHeight:"1.6",margin:0}},"1 prompt per session. Type or photograph your answer for AI feedback. You can pause and come back later.")
+    ),
+    isFormatSubj&&React.createElement("div",{style:cs({marginBottom:"14px"})},
+      React.createElement("div",{style:{color:MUTED,fontSize:"10px",fontWeight:"700",letterSpacing:"1px",marginBottom:"10px"}},"ANSWER FORMAT"),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}},
+        ANSWER_FORMATS.map(function(f){
+          var active=p.answerFormat===f.id;
+          return React.createElement("button",{key:f.id,onClick:function(){p.onAnswerFormat(f.id);},style:{cursor:"pointer",textAlign:"left",borderRadius:"12px",padding:"10px 12px",background:active?f.id==="mc"?"rgba(67,97,238,.12)":"rgba(6,214,160,.12)":CARD,border:"2px solid "+(active?(f.id==="mc"?BLUE:TEAL):BORDER)}},
+            React.createElement("div",{style:{fontSize:"16px",marginBottom:"2px"}},f.icon),
+            React.createElement("div",{style:{color:WHITE,fontWeight:"800",fontSize:"12px"}},f.name),
+            React.createElement("div",{style:{color:MUTED,fontSize:"10px",marginTop:"2px",lineHeight:"1.4"}},f.desc)
+          );
+        })
+      )
+    ),
+    isNVR&&React.createElement("div",{style:cs({marginBottom:"14px"})},
+      React.createElement("div",{style:{color:MUTED,fontSize:"10px",fontWeight:"700",letterSpacing:"1px",marginBottom:"10px"}},"QUESTION STYLE"),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}},
+        [{id:"visual",icon:"🔷",name:"Visual Shapes",desc:"Rotations, mirrors & patterns — real shape graphics"},
+         {id:"text",icon:"🔤",name:"Text-Based",desc:"Codes, sequences & letter patterns"}].map(function(f){
+          var active=p.nvrFormat===f.id;
+          return React.createElement("button",{key:f.id,onClick:function(){p.onNvrFormat(f.id);},style:{cursor:"pointer",textAlign:"left",borderRadius:"12px",padding:"10px 12px",background:active?"rgba(6,214,160,.12)":CARD,border:"2px solid "+(active?TEAL:BORDER)}},
+            React.createElement("div",{style:{fontSize:"16px",marginBottom:"2px"}},f.icon),
+            React.createElement("div",{style:{color:WHITE,fontWeight:"800",fontSize:"12px"}},f.name),
+            React.createElement("div",{style:{color:MUTED,fontSize:"10px",marginTop:"2px",lineHeight:"1.4"}},f.desc)
+          );
+        })
+      )
     ),
     React.createElement("div",{style:{color:MUTED,fontSize:"10px",fontWeight:"700",letterSpacing:"1px",marginBottom:"10px"}},"CHOOSE PRACTICE MODE"),
     MODES.map(function(m){

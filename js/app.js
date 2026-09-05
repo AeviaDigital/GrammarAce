@@ -40,6 +40,8 @@ function App(){
   var bkSt=React.useState(false),       showBackup=bkSt[0],  setShowBackup=bkSt[1];
   var impSt=React.useState(false),      showImport=impSt[0], setShowImport=impSt[1];
   var impMsgSt=React.useState(""),      importMsg=impMsgSt[0],setImportMsg=impMsgSt[1];
+  var afmtSt=React.useState("mc"),      answerFormat=afmtSt[0], setAnswerFormat=afmtSt[1];
+  var nvrfSt=React.useState("visual"),  nvrFormat=nvrfSt[0],  setNvrFormat=nvrfSt[1];
 
   var apiKeyRef=React.useRef(apiKey);
   var profRef=React.useRef(profile);
@@ -59,10 +61,13 @@ function App(){
   var qtRef=React.useRef(10);
   var histRef=React.useRef([]);
   var isLeavingRef=React.useRef(false);
+  var afmtRef=React.useRef("mc");
+  var nvrfRef=React.useRef("visual");
 
   apiKeyRef.current=apiKey; profRef.current=profile;
   diffRef.current=diff; modeRef.current=mode;
   subjRef.current=subject; topicRef.current=topic;
+  afmtRef.current=answerFormat; nvrfRef.current=nvrFormat;
 
   // beforeunload - only on actual close, not internal navigation
   React.useEffect(function(){
@@ -123,9 +128,9 @@ function App(){
     return null;
   }
 
-  function recordScore(idx,qData){
+  function recordScore(idx,qData,explicitOk){
     var isW=qData&&qData.type==="writing";
-    var ok=isW?true:qData?idx===qData.correctIndex:false;
+    var ok=isW?true:(explicitOk!==undefined?explicitOk:(qData?idx===qData.correctIndex:false));
     var newCS=ok?csRef.current+1:0; csRef.current=newCS; setCStreak(newCS);
     var newT=totRef.current+1; totRef.current=newT; setTotal(newT);
     var xpPQ={year1:6,year2:8,year3:10,year4:15,year5:20,year6:25};
@@ -213,15 +218,22 @@ function App(){
 
   async function loadQ(subId,tp,yearId){
     setLoading(true); setQ(null); setGenError(""); setAnswered(false); setSel(null); setHintShown(false);
+    // Visual NVR: generated locally by plain JS geometry, not the LLM — instant, no API call needed.
+    if(subId==="nvr"&&nvrfRef.current==="visual"&&NVR_VISUAL_TOPICS.indexOf(tp)!==-1){
+      var visQ=generateVisualNVR(tp,yearId);
+      setQ(visQ); setLoading(false);
+      return;
+    }
     if(modeRef.current&&modeRef.current.timed&&subId!=="writing"){
       var secs=(subId==="english"||subId==="nvr")?60:30;
       setTimer(secs); setTimerOn(true);
     }
+    var fmt=(subId==="maths"||subId==="english")?afmtRef.current:"mc";
     try{
-      var text=await callGroq(apiKeyRef.current,buildPrompt(subId,tp,yearId,prevRef.current));
+      var text=await callGroq(apiKeyRef.current,buildPrompt(subId,tp,yearId,prevRef.current,fmt));
       var parsed=validateQuestion(JSON.parse(text));
       if(subId==="maths") parsed=tryMathsValidate(parsed);
-      if(subId==="english"||subId==="nvr"){
+      if((subId==="english"||subId==="nvr")&&parsed.type!=="written"){
         setGenError("double-checking");
         parsed=await doublePassValidate(apiKeyRef.current,parsed);
         setGenError("");
@@ -231,6 +243,13 @@ function App(){
       if(parsed.type==="writing") recordScore(0,parsed);
     }catch(e){ console.error("Q error:",e); setGenError(e.message||"Unknown error — please retry."); }
     setLoading(false);
+  }
+
+  function handleWrittenAnswer(userText){
+    if(answered) return;
+    clearTimeout(timerRef.current); setTimerOn(false);
+    var ok=checkWrittenAnswer(userText,q);
+    setSel(userText); setAnswered(true); recordScore(userText,q,ok);
   }
 
   function handleAnswer(i){
@@ -262,12 +281,17 @@ function App(){
     setFromRes(true); setScreen("results");
   }
 
+  function topicPoolFor(subId){
+    if(subId==="nvr"&&nvrfRef.current==="visual") return NVR_VISUAL_TOPICS;
+    return TOPICS[subId];
+  }
+
   function handleNext(){
     var qt=qtRef.current, qn=qnRef.current;
     if(qn>=qt){ finishSession(); return; }
     var next=qn+1; qnRef.current=next; setQNum(next);
     var sub=subjRef.current;
-    var nt=modeRef.current&&modeRef.current.id==="topic"?topicRef.current:randItem(TOPICS[sub.id]);
+    var nt=modeRef.current&&modeRef.current.id==="topic"?topicRef.current:randItem(topicPoolFor(sub.id));
     setTopic(nt); topicRef.current=nt;
     loadQ(sub.id,nt,diffRef.current);
   }
@@ -282,7 +306,7 @@ function App(){
     var qt=sub.id==="writing"?1:m.q;
     setQTotal(qt); qtRef.current=qt;
     prevRef.current=[];
-    var t=randItem(TOPICS[sub.id]);
+    var t=randItem(topicPoolFor(sub.id));
     setTopic(t); topicRef.current=t;
     setScreen("question"); loadQ(sub.id,t,diffRef.current);
   }
@@ -454,6 +478,8 @@ function App(){
     }),
     screen==="modes"&&React.createElement(ModesScreen,{
       subject:subject,
+      answerFormat:answerFormat,onAnswerFormat:function(f){setAnswerFormat(f);afmtRef.current=f;},
+      nvrFormat:nvrFormat,onNvrFormat:function(f){setNvrFormat(f);nvrfRef.current=f;},
       onBack:function(){setScreen("subjects");},
       onHome:function(){setScreen("home");},
       onPick:function(m){startSession(subject,m);},
@@ -472,7 +498,8 @@ function App(){
       onPause:handlePause,
       qNum:qNum,qTotal:qTotal,subjectId:subject?subject.id:"",yearId:diff,
       timed:mode&&mode.timed,timer:timer,cStreak:cStreak,
-      apiKey:apiKey,onWritingFeedback:handleWritingFeedback
+      apiKey:apiKey,onWritingFeedback:handleWritingFeedback,
+      onWrittenAnswer:handleWrittenAnswer
     }),
     screen==="results"&&React.createElement(ResultsScreen,{
       correct:sessCor,total:qTotal,subjectName:subject?subject.name:"",xpEarned:sessXP,
