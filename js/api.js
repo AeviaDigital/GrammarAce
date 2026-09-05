@@ -4,7 +4,7 @@ async function callGroq(apiKey,prompt){
   var res=await fetch("https://api.groq.com/openai/v1/chat/completions",{
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
-    body:JSON.stringify({model:"llama-3.3-70b-versatile",messages:[{role:"user",content:prompt}],max_tokens:1024,temperature:0.8})
+    body:JSON.stringify({model:"openai/gpt-oss-120b",messages:[{role:"user",content:prompt}],max_tokens:1024,temperature:0.8})
   });
   var data=await res.json();
   if(data.error) throw new Error(data.error.message);
@@ -227,7 +227,7 @@ async function runOCR(imageFile,apiKey,onProgress){
     method:"POST",
     headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
     body:JSON.stringify({
-      model:"meta-llama/llama-4-scout-17b-16e-instruct",
+      model:"qwen/qwen3.6-27b",
       messages:[{role:"user",content:[
         {type:"image_url",image_url:{url:"data:"+mtype+";base64,"+base64}},
         {type:"text",text:"Transcribe all handwritten text in this image exactly as written. Return only the transcribed text, no commentary. Preserve line breaks."}

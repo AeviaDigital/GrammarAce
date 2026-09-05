@@ -27,7 +27,7 @@ function ApiKeyScreen(p){
         React.createElement("span",{style:{fontSize:"22px"}},"🔑"),
         React.createElement("h2",{style:{color:WHITE,fontSize:"15px",fontWeight:"800",margin:0}},"Enter Your Free Groq API Key")
       ),
-      React.createElement("p",{style:{color:MUTED,fontSize:"12px",lineHeight:"1.65",margin:"0 0 14px"}},"Uses Groq · Llama 3.3 — ",React.createElement("strong",{style:{color:TEAL}},"100% free"),", no credit card needed."),
+      React.createElement("p",{style:{color:MUTED,fontSize:"12px",lineHeight:"1.65",margin:"0 0 14px"}},"Uses Groq · GPT-OSS 120B — ",React.createElement("strong",{style:{color:TEAL}},"100% free"),", no credit card needed."),
       React.createElement("input",{type:"password",value:keySt,onChange:function(e){setKey(e.target.value);setErr("");},onKeyDown:function(e){if(e.key==="Enter")save();},placeholder:"Paste your key: gsk_...",style:{width:"100%",background:BG,border:"1px solid "+(err?RED:BORDER),borderRadius:"10px",padding:"11px 13px",color:WHITE,fontSize:"13px",marginBottom:"8px",display:"block"}}),
       err&&React.createElement("p",{style:{color:RED,fontSize:"11px",margin:"0 0 10px",lineHeight:"1.5"}},err),
       React.createElement("button",{onClick:save,disabled:testing,style:bs("linear-gradient(135deg,"+GOLD+","+ORANGE+")",{width:"100%",color:BG,opacity:testing?0.7:1,fontSize:"15px",padding:"13px"})},testing?"Testing...":"Start GrammarAce")

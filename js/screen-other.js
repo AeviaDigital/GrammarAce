@@ -100,7 +100,7 @@ function DashboardScreen(p){
     React.createElement("div",{style:cs({marginBottom:"10px",background:"rgba(67,97,238,.07)",border:"1px solid "+BLUE+"44"})},
       React.createElement("p",{style:{color:MUTED,fontSize:"11px",lineHeight:"1.7",margin:0}},
         React.createElement("strong",{style:{color:WHITE}},"About these questions: "),
-        "All questions are AI-generated (Groq · Llama 3.3) and not sourced from official past papers. They match the style of UK KS1-KS2 and 11+ assessments for practice only."
+        "All questions are AI-generated (Groq · GPT-OSS 120B) and not sourced from official past papers. They match the style of UK KS1-KS2 and 11+ assessments for practice only."
       )
     ),
     React.createElement("div",{style:cs({marginBottom:"10px",background:"rgba(6,214,160,.05)",border:"1px solid "+TEAL+"44"})},
