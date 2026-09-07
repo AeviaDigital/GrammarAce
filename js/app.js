@@ -16,7 +16,7 @@ function App(){
   var strkSt=React.useState(0),         streak=strkSt[0],    setStreak=strkSt[1];
   var totSt=React.useState(0),          total=totSt[0],      setTotal=totSt[1];
   var badgSt=React.useState([]),        badges=badgSt[0],    setBadges=badgSt[1];
-  var cntSt=React.useState({maths:0,english:0,nvr:0,writing:0,spelling:0,typing:0,grammar:0}),counts=cntSt[0],setCounts=cntSt[1];
+  var cntSt=React.useState({maths:0,english:0,verbal:0,nvr:0,writing:0,spelling:0,typing:0,grammar:0}),counts=cntSt[0],setCounts=cntSt[1];
   var diffSt=React.useState(""),        diff=diffSt[0],      setDiff=diffSt[1];
   var qSt=React.useState(null),         q=qSt[0],            setQ=qSt[1];
   var ldSt=React.useState(false),       loading=ldSt[0],     setLoading=ldSt[1];
@@ -54,8 +54,9 @@ function App(){
   var xpRef=React.useRef(0);
   var totRef=React.useRef(0);
   var badRef=React.useRef([]);
-  var cntRef=React.useRef({maths:0,english:0,nvr:0,writing:0,spelling:0,typing:0,grammar:0});
+  var cntRef=React.useRef({maths:0,english:0,verbal:0,nvr:0,writing:0,spelling:0,typing:0,grammar:0});
   var prevRef=React.useRef([]);
+  var passageBatchRef=React.useRef(null); // {passage, passageTitle, questions:[...], nextIdx}
   var timerRef=React.useRef(null);
   var qnRef=React.useRef(1);
   var qtRef=React.useRef(10);
@@ -97,7 +98,7 @@ function App(){
     var d=loadProgress(profile.id);
     histRef.current=loadHistory(profile.id);
     var px=d.xp||0, pt=d.total||0, pb=d.badges||[];
-    var pc=d.counts||{maths:0,english:0,nvr:0,writing:0,spelling:0,typing:0,grammar:0};
+    var pc=d.counts||{maths:0,english:0,verbal:0,nvr:0,writing:0,spelling:0,typing:0,grammar:0};
     var pd=d.diff||"";
     setXp(px); xpRef.current=px;
     setTotal(pt); totRef.current=pt;
@@ -163,6 +164,8 @@ function App(){
         explanation:qData.explanation||"",
         hint:qData.hint||"",
         modelAnswer:qData.modelAnswer||null,
+        passage:qData.passage||null,
+        passageTitle:qData.passageTitle||null,
         studentAnswer:null,
         writingFeedback:null,
         writingScore:null
@@ -218,26 +221,105 @@ function App(){
 
   async function loadQ(subId,tp,yearId){
     setLoading(true); setQ(null); setGenError(""); setAnswered(false); setSel(null); setHintShown(false);
-    // Visual NVR: generated locally by plain JS geometry, not the LLM — instant, no API call needed.
+    var profId=profRef.current&&profRef.current.id;
+    // Visual NVR: generated locally by plain JS geometry, not the LLM — instant,
+    // no API call, but still checked against the qbank so two very similar
+    // visual questions can't land back-to-back in the same session.
     if(subId==="nvr"&&nvrfRef.current==="visual"&&NVR_VISUAL_TOPICS.indexOf(tp)!==-1){
-      var visQ=generateVisualNVR(tp,yearId);
+      var visQ=await qbankGenerateUnique(profId,"nvr",tp,yearId,
+        function(){ return generateVisualNVR(tp,yearId); },
+        function(r){ return qbankHash(r.topic+"|"+(r.optionsSvg?r.optionsSvg.join(""):JSON.stringify(r.options||[]))); }
+      );
       setQ(visQ); setLoading(false);
       return;
     }
+    // Letter Series: pure alphabet-position arithmetic, generated locally by
+    // plain JS — no LLM call needed, same reasoning as visual NVR.
+    if(subId==="verbal"&&tp==="Letter Series"){
+      var lsQ=await qbankGenerateUnique(profId,"verbal",tp,yearId,
+        function(){ return generateLetterSeries(yearId); },
+        function(r){ return r.question; }
+      );
+      setQ(lsQ); setLoading(false);
+      return;
+    }
     if(modeRef.current&&modeRef.current.timed&&subId!=="writing"){
-      var secs=(subId==="english"||subId==="nvr")?60:30;
+      var secs=(subId==="english"||subId==="verbal"||subId==="nvr")?60:30;
       setTimer(secs); setTimerOn(true);
+    }
+    // Reading Comprehension, Spelling, Punctuation, Cloze: each is one shared
+    // passage with several linked questions, generated in a single call and
+    // served one at a time from a local batch — matches GL's real paper
+    // structure instead of a fresh unrelated passage per question. Always
+    // multiple-choice; no written-answer format for these, since GL's real
+    // versions of these exercises are never free-text.
+    if(subId==="english"&&ENGLISH_PASSAGE_TOPICS.indexOf(tp)!==-1){
+      var batch=passageBatchRef.current;
+      if(batch&&batch.topic===tp&&batch.nextIdx<batch.questions.length){
+        var sub=batch.questions[batch.nextIdx];
+        var served=Object.assign({},sub,{
+          topic:tp,
+          passage:batch.passage,
+          passageTitle:batch.passageTitle,
+          passageIndex:batch.nextIdx+1,
+          passageTotal:batch.questions.length
+        });
+        batch.nextIdx+=1;
+        if(batch.nextIdx>=batch.questions.length) passageBatchRef.current=null;
+        if(served.question) prevRef.current=prevRef.current.concat([served.question]).slice(-20);
+        setQ(served); setLoading(false);
+        return;
+      }
+      try{
+        var qbankAvoid=await qbankRecentRaw(profId,"english",tp,yearId,6);
+        var avoidList=prevRef.current.concat(qbankAvoid);
+        var freshBatch=await qbankGenerateUnique(profId,"english",tp,yearId,
+          function(){ return generateEnglishPassageBatch(tp,apiKeyRef.current,yearId,avoidList); },
+          function(r){ return r.passage; }
+        );
+        passageBatchRef.current={topic:tp,passage:freshBatch.passage,passageTitle:freshBatch.passageTitle,questions:freshBatch.questions,nextIdx:1};
+        var first=Object.assign({},freshBatch.questions[0],{
+          topic:tp,
+          passage:freshBatch.passage,
+          passageTitle:freshBatch.passageTitle,
+          passageIndex:1,
+          passageTotal:freshBatch.questions.length
+        });
+        if(freshBatch.questions.length<=1) passageBatchRef.current=null;
+        if(first.question) prevRef.current=prevRef.current.concat([first.question]).slice(-20);
+        setQ(first);
+      }catch(e){ console.error("Passage error:",e); setGenError(e.message||"Unknown error — please retry."); }
+      setLoading(false);
+      return;
     }
     var fmt=(subId==="maths"||subId==="english")?afmtRef.current:"mc";
     try{
-      var text=await callGroq(apiKeyRef.current,buildPrompt(subId,tp,yearId,prevRef.current,fmt));
-      var parsed=validateQuestion(JSON.parse(text));
-      if(subId==="maths") parsed=tryMathsValidate(parsed);
-      if((subId==="english"||subId==="nvr")&&parsed.type!=="written"){
-        setGenError("double-checking");
-        parsed=await doublePassValidate(apiKeyRef.current,parsed);
-        setGenError("");
-      }
+      var qbankAvoid2=await qbankRecentRaw(profId,subId,tp,yearId,6);
+      var avoidList2=prevRef.current.concat(qbankAvoid2);
+      var parsed=await qbankGenerateUnique(profId,subId,tp,yearId,
+        async function(){
+          if(subId==="verbal"){
+            // Verbal Reasoning uses its own 5-option (A-E) prompt/validator —
+            // matches GL's real format, distinct from the generic 4-option path.
+            var vtext=await callGroq(apiKeyRef.current,buildVerbalPrompt(tp,yearId,avoidList2));
+            var vp=validateVerbalQuestion(JSON.parse(vtext));
+            setGenError("double-checking");
+            vp=await doublePassValidate(apiKeyRef.current,vp,4);
+            setGenError("");
+            return vp;
+          }
+          var text=await callGroq(apiKeyRef.current,buildPrompt(subId,tp,yearId,avoidList2,fmt));
+          var p=validateQuestion(JSON.parse(text));
+          if(subId==="maths") p=tryMathsValidate(p);
+          if((subId==="english"||subId==="nvr")&&p.type!=="written"){
+            setGenError("double-checking");
+            p=await doublePassValidate(apiKeyRef.current,p);
+            setGenError("");
+          }
+          return p;
+        },
+        function(r){ return r.question||""; }
+      );
       if(parsed.question) prevRef.current=prevRef.current.concat([parsed.question]).slice(-20);
       setQ(parsed);
       if(parsed.type==="writing") recordScore(0,parsed);
@@ -266,6 +348,7 @@ function App(){
     var earned=badRef.current.slice(); var got=null;
     if((nc.maths||0)>=5)    got=award(earned,"m5")||got;
     if((nc.english||0)>=5)  got=award(earned,"e5")||got;
+    if((nc.verbal||0)>=5)   got=award(earned,"vr5")||got;
     if((nc.nvr||0)>=5)      got=award(earned,"n5")||got;
     if((nc.writing||0)>=5)  got=award(earned,"w5")||got;
     if((nc.spelling||0)>=5) got=award(earned,"sp5")||got;
@@ -291,13 +374,20 @@ function App(){
     if(qn>=qt){ finishSession(); return; }
     var next=qn+1; qnRef.current=next; setQNum(next);
     var sub=subjRef.current;
-    var nt=modeRef.current&&modeRef.current.id==="topic"?topicRef.current:randItem(topicPoolFor(sub.id));
+    // If an English passage batch (Reading Comprehension / Spelling / Punctuation
+    // / Cloze) still has unanswered linked questions, keep serving from it rather
+    // than randomly jumping to a different topic — otherwise a single passage
+    // would only ever yield 1 question instead of the full linked set.
+    var batch=passageBatchRef.current;
+    var continuingPassage=sub.id==="english"&&batch&&batch.nextIdx<batch.questions.length;
+    var nt=continuingPassage?batch.topic:(modeRef.current&&modeRef.current.id==="topic"?topicRef.current:randItem(topicPoolFor(sub.id)));
     setTopic(nt); topicRef.current=nt;
     loadQ(sub.id,nt,diffRef.current);
   }
 
   function startSession(sub,m){
     if(!diffRef.current){ alert("Please select a year group first."); return; }
+    passageBatchRef.current=null; // clear any leftover passage batch from a previous session
     setSubject(sub); subjRef.current=sub;
     setMode(m); modeRef.current=m;
     setSessCor(0); scRef.current=0; setSessXP(0);

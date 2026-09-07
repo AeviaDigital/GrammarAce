@@ -118,8 +118,9 @@ function HistoryScreen(p){
     ),
     React.createElement("div",{style:{color:MUTED,fontSize:"10px",fontWeight:"700",letterSpacing:"1px",marginBottom:"8px"}},"FILTER BY SUBJECT"),
     React.createElement("div",{style:{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"10px"}},
-      [["all","All"],["maths","🔢 Maths"],["english","📖 English"],["nvr","🔷 NVR"],["writing","✏️ Writing"]].map(function(f){
-        return React.createElement("button",{key:f[0],onClick:function(){setFilter(f[0]);setExpanded(null);},style:{padding:"5px 12px",borderRadius:"20px",border:"1px solid "+(filter===f[0]?GOLD:BORDER),background:filter===f[0]?"rgba(255,209,102,.1)":"transparent",color:filter===f[0]?GOLD:MUTED,fontSize:"11px",fontWeight:"700",cursor:"pointer"}},f[1]);
+      [{id:"all",icon:"",name:"All"}].concat(SUBJECTS).map(function(s){
+        var label=s.icon?s.icon+" "+s.name:s.name;
+        return React.createElement("button",{key:s.id,onClick:function(){setFilter(s.id);setExpanded(null);},style:{padding:"5px 12px",borderRadius:"20px",border:"1px solid "+(filter===s.id?GOLD:BORDER),background:filter===s.id?"rgba(255,209,102,.1)":"transparent",color:filter===s.id?GOLD:MUTED,fontSize:"11px",fontWeight:"700",cursor:"pointer"}},label);
       })
     ),
     React.createElement("div",{style:{display:"flex",gap:"6px",marginBottom:"10px"}},

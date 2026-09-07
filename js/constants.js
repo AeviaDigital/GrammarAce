@@ -7,7 +7,8 @@ var BLUE="#4361EE",PURPLE="#7B2FBE",RED="#EF4444",WHITE="#E8EEFF",MUTED="#6B7A9E
 // ── SUBJECTS ─────────────────────────────────────────────────────────────────
 var SUBJECTS=[
   {id:"maths",   name:"Maths",               icon:"🔢",grad:"linear-gradient(135deg,#4361EE,#7B2FBE)",col:"#4361EE",desc:"Arithmetic, fractions, algebra & problem solving"},
-  {id:"english", name:"English & Verbal",    icon:"📖",grad:"linear-gradient(135deg,#EF5DA8,#FF9F1C)",col:"#EF5DA8",desc:"Comprehension, vocabulary & verbal reasoning"},
+  {id:"english", name:"English",             icon:"📖",grad:"linear-gradient(135deg,#EF5DA8,#FF9F1C)",col:"#EF5DA8",desc:"Reading comprehension, spelling, punctuation & cloze"},
+  {id:"verbal",  name:"Verbal Reasoning",    icon:"🧩",grad:"linear-gradient(135deg,#7B2FBE,#EF5DA8)",col:"#7B2FBE",desc:"Letter puzzles, word logic & verbal deduction"},
   {id:"nvr",     name:"Non-Verbal Reasoning",icon:"🔷",grad:"linear-gradient(135deg,#06D6A0,#4361EE)",col:"#06D6A0",desc:"Patterns, sequences & spatial thinking"},
   {id:"writing", name:"Creative Writing",    icon:"✏️", grad:"linear-gradient(135deg,#FF9F1C,#EF5DA8)",col:"#FF9F1C",desc:"1 prompt per session · AI feedback · pause & return"},
   {id:"spelling",name:"Spelling & Speaking", icon:"🔊",grad:"linear-gradient(135deg,#06D6A0,#7B2FBE)",col:"#06D6A0",desc:"Spelling tests with audio · pronunciation check"},
@@ -16,10 +17,17 @@ var SUBJECTS=[
 ];
 
 // ── TOPICS ────────────────────────────────────────────────────────────────────
+// English and Verbal Reasoning topic lists are aligned to GL Assessment's actual
+// familiarisation-paper structure (verified against real English, Verbal Skills,
+// Verbal Reasoning, NVR and NVR & Maths papers) rather than generic 11+ topic
+// names. NVR topic names are shared between visual (deterministic SVG) and
+// text/LLM generation modes — see NVR_VISUAL_TOPICS in nvr-visual.js for which
+// of these currently have a deterministic generator.
 var TOPICS={
   maths:  ["Arithmetic","Fractions","Decimals & Percentages","Ratios","Algebra & Sequences","Word Problems","Shape & Space","Data Handling","Time & Measurement","Mental Maths"],
-  english:["Reading Comprehension","Vocabulary","Synonyms & Antonyms","Verbal Analogies","Sentence Completion","Grammar & Punctuation","Cloze Passages","Word Relationships","Spelling","Literary Devices"],
-  nvr:    ["Number Sequences","Letter Sequences","Pattern Series","Odd One Out","Matrix Patterns","Code Breaking","Spatial Reasoning","Shape Analogies","Letter-Number Codes","Series Completion"],
+  english:["Reading Comprehension","Spelling","Punctuation","Cloze / Best Word"],
+  verbal: ["Insert the Letter","Move the Letter","Word Group Analogy","Complete the Pair","Closest in Meaning","Most Opposite","Odd Two Out","Hidden Word (Between Words)","Hidden Word (Inside a Word)","Letter Series","Logic & Deduction"],
+  nvr:    ["Series","Shape Analogy","Odd One Out","Matrix","Shape Codes","Mirror Image"],
   writing:["Narrative Story","Descriptive Writing","Character Sketch","Setting Description","Dialogue Writing","Persuasive Letter","Adventure Story","Mystery Story","Nature Writing","Imaginative Scenario"]
 };
 
@@ -67,13 +75,14 @@ var BADGES=[
   {id:"perfect",icon:"💎",name:"Perfect!",    desc:"100% on a full session",       xp:200},
   {id:"m5",     icon:"🔢",name:"Maths Master",desc:"Complete 5 Maths sessions",   xp:150},
   {id:"e5",     icon:"📖",name:"Word Wizard", desc:"Complete 5 English sessions", xp:150},
+  {id:"vr5",    icon:"🧩",name:"Logic Ace",   desc:"Complete 5 Verbal Reasoning sessions", xp:150},
   {id:"n5",     icon:"🔷",name:"Pattern Pro", desc:"Complete 5 NVR sessions",     xp:150},
   {id:"w5",     icon:"✏️", name:"Storyteller", desc:"Complete 5 Writing sessions", xp:150},
   {id:"sp5",    icon:"🔊",name:"Spellmaster", desc:"Complete 5 Spelling sessions", xp:150},
   {id:"tp5",    icon:"⌨️", name:"Touch Typist",desc:"Complete 5 Typing sessions",  xp:150},
   {id:"mockAce",icon:"🎓",name:"Mock Ace",    desc:"Score 80%+ in a mock exam",   xp:500},
   {id:"100q",   icon:"💯",name:"Century!",    desc:"Answer 100 questions total",  xp:400},
-  {id:"allRnd", icon:"🌟",name:"All Rounder", desc:"Try all 4 subjects",          xp:300},
+  {id:"allRnd", icon:"🌟",name:"All Rounder", desc:"Try all subjects",            xp:300},
   {id:"gp5",    icon:"📝",name:"Grammarian",  desc:"Complete 5 Grammar sessions",  xp:150}
 ];
 
@@ -158,9 +167,15 @@ var TYPING_LESSONS=[
 ];
 
 // ── FALLBACK QUESTIONS ────────────────────────────────────────────────────────
+// NOTE: defined but not currently wired into any error-handling path anywhere
+// in the app — loadQ's catch block shows an error message + retry button
+// instead of falling back to these. Kept up to date with the current taxonomy
+// in case this gets connected later; flagged for a product decision on
+// whether to wire it in or remove it as unused.
 var FALLBACKS={
   maths:  {question:"What is 3/4 of 48?",options:["A) 24","B) 36","C) 32","D) 40"],correctIndex:1,explanation:"48 / 4 = 12. 12 x 3 = 36. Answer is B) 36.",hint:"Find one quarter first.",topic:"Fractions"},
-  english:{question:"Which word is closest in meaning to meticulous?",options:["A) Careless","B) Precise","C) Hasty","D) Vague"],correctIndex:1,explanation:"Meticulous means attention to detail. B) Precise.",hint:"Think about being very careful.",topic:"Vocabulary"},
-  nvr:    {question:"What comes next: A, C, E, G, ?",options:["A) H","B) I","C) J","D) K"],correctIndex:1,explanation:"Each letter skips one. Answer is B) I.",hint:"Count the gap between letters.",topic:"Letter Sequences"},
+  english:{question:"A reading passage and its questions could not be generated. Please retry.",options:["A) Retry","B) Retry","C) Retry","D) Retry"],correctIndex:0,explanation:"This is a placeholder shown only if live question generation fails.",hint:"Retry to load a real question.",topic:"Reading Comprehension"},
+  verbal: {question:"Look at this series of letter-pairs: BD, DF, FH, ?\n\nWhich pair of letters comes next?",options:["A) GI","B) HJ","C) HI","D) GJ","E) IJ"],correctIndex:1,explanation:"Each pair moves on by 2 letters. Answer is B) HJ.",hint:"Look at how much each letter shifts along the alphabet.",topic:"Letter Series"},
+  nvr:    {question:"Live question generation failed — please retry to load a real shape-based question.",options:["A) Retry","B) Retry","C) Retry","D) Retry"],correctIndex:0,explanation:"This is a placeholder shown only if live question generation fails.",hint:"Retry to load a real question.",topic:"Series"},
   writing:{question:"Write a story opening about discovering a mysterious door in your school.",type:"writing",guidance:["Hook the reader immediately","Use vivid sensory details","Build tension and mystery"],modelAnswer:"The door had not been there on Monday. Its ancient oak surface stood where the broom cupboard used to be.",explanation:"Examiners reward vivid description and immediate engagement.",hint:"Start with something unexpected.",topic:"Narrative Story"}
 };

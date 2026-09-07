@@ -92,8 +92,15 @@ function QuestionScreen(p){
       React.createElement("div",{style:{display:"flex",gap:"6px",justifyContent:"center",marginTop:"10px"}},[0,1,2].map(function(i){return React.createElement("div",{key:i,style:{width:"7px",height:"7px",borderRadius:"50%",background:GOLD,animation:"pulse 1s "+(i*.2)+"s ease-in-out infinite"}});}))
     ),
     !p.error&&!p.loading&&q&&React.createElement("div",null,
+      q.passage&&React.createElement("div",{style:cs({marginBottom:"12px",maxHeight:"200px",overflowY:"auto"})},
+        React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px",flexWrap:"wrap",gap:"4px"}},
+          React.createElement("span",{style:{color:MUTED,fontSize:"10px",fontWeight:"700"}},"READING PASSAGE"+(q.passageTitle?" — "+q.passageTitle:"")),
+          q.passageIndex&&q.passageTotal&&React.createElement("span",{style:{color:MUTED,fontSize:"10px",fontWeight:"700"}},"Q"+q.passageIndex+" of "+q.passageTotal+" on this passage")
+        ),
+        React.createElement("p",{style:{color:WHITE,fontSize:"12.5px",lineHeight:"1.7",margin:0,whiteSpace:"pre-wrap"}},q.passage)
+      ),
       React.createElement("div",{style:cs({marginBottom:"12px"})},
-        React.createElement("p",{style:{color:WHITE,fontSize:"14px",fontWeight:"700",lineHeight:"1.7",margin:0}},q.question)
+        React.createElement("p",{style:{color:WHITE,fontSize:"14px",fontWeight:"700",lineHeight:"1.7",margin:0,whiteSpace:"pre-wrap"}},q.question)
       ),
       isW&&React.createElement(WritingAnswerPanel,{
         question:q.question,guidance:q.guidance,modelAnswer:q.modelAnswer,
@@ -111,7 +118,7 @@ function QuestionScreen(p){
       (!isW&&!isWritten)&&React.createElement("div",null,
         !p.answered&&React.createElement("button",{onClick:p.onHint,style:{background:"none",border:"1px dashed "+PURPLE,color:PURPLE,borderRadius:"10px",padding:"7px 13px",fontSize:"12px",fontWeight:"700",cursor:"pointer",marginBottom:"12px",display:"block",textAlign:"left",width:"100%",lineHeight:"1.5"}},p.hintShown?("💡 "+(q.hint||"")):"💡 Need a hint? Tap to reveal"),
         isVisual&&q.displaySvgs&&React.createElement("div",{style:cs({marginBottom:"14px",textAlign:"center"})},
-          React.createElement("div",{style:{color:MUTED,fontSize:"10px",fontWeight:"700",marginBottom:"10px"}},q.kind==="mirror"?"ORIGINAL SHAPE":"PATTERN SO FAR"),
+          React.createElement("div",{style:{color:MUTED,fontSize:"10px",fontWeight:"700",marginBottom:"10px"}},q.kind==="mirror"?"ORIGINAL SHAPE":q.kind==="analogy"?"COMPLETE THE ANALOGY":q.kind==="codes"?"WORK OUT THE CODE":"PATTERN SO FAR"),
           q.displayIsHtml
             ?React.createElement("div",{dangerouslySetInnerHTML:{__html:q.displaySvgs[0]}})
             :React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",gap:"8px",flexWrap:"wrap"}},
@@ -123,7 +130,7 @@ function QuestionScreen(p){
                 }).concat(q.kind==="rotation"?[React.createElement("span",{key:"arrow-end",style:{color:MUTED,fontSize:"16px"}},"→"),React.createElement("div",{key:"q-mark",style:{width:"56px",height:"56px",display:"flex",alignItems:"center",justifyContent:"center",border:"2px dashed "+MUTED,borderRadius:"8px",color:MUTED,fontSize:"22px",fontWeight:"900"}},"?")]:[])
               )
         ),
-        isVisual
+        isVisual&&q.optionsSvg
           ?React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"12px"}},
               (q.optionsSvg||[]).map(function(svg,i){
                 return React.createElement("button",{key:i,onClick:function(){if(!p.answered)p.onAnswer(i);},style:svgOptStyle(i)},

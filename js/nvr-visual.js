@@ -5,7 +5,10 @@
 // correct, unlike the AI-generated text-based subjects elsewhere in the app.
 // ══════════════════════════════════════════════════════════════════════════════
 
-var NVR_VISUAL_TOPICS = ["Rotation Series","Odd One Out (Shapes)","Mirror Image","Pattern Matrix"];
+// Topic names here match TOPICS.nvr in constants.js exactly, so the same label
+// works whether a question is generated visually (deterministic SVG, below) or
+// via the LLM text-based fallback.
+var NVR_VISUAL_TOPICS = ["Series","Odd One Out","Mirror Image","Matrix","Shape Analogy","Shape Codes"];
 
 var NVR_PALETTE = ["#4361EE","#EF5DA8","#06D6A0","#FFD166","#FF9F1C","#7B2FBE"];
 var NVR_STROKE = "#1E2654";
@@ -43,6 +46,9 @@ function nvrRotatePoints(pts,cx,cy,angleDeg){
 function nvrMirrorPoints(pts,cx){
   return pts.map(function(p){return [cx*2-p[0],p[1]];});
 }
+function nvrScalePoints(pts,cx,cy,factor){
+  return pts.map(function(p){ return [cx+(p[0]-cx)*factor, cy+(p[1]-cy)*factor]; });
+}
 function nvrPathD(pts){
   return pts.map(function(p,i){return (i===0?"M":"L")+p[0].toFixed(1)+","+p[1].toFixed(1);}).join(" ")+" Z";
 }
@@ -51,12 +57,13 @@ function nvrSvgWrap(inner){
 }
 
 // ── SHAPE RENDERERS ───────────────────────────────────────────────────────────
-// spec: {kind:"flag"|"circleDot"|"poly", sides, rotation, color, mirrored, fillOnly}
+// spec: {kind:"flag"|"circleDot"|"poly", sides, rotation, color, mirrored, fillOnly, scale}
 function nvrRenderShape(spec){
   var color=spec.color||NVR_PALETTE[0];
   var rot=spec.rotation||0;
+  var scale=spec.scale||1;
   if(spec.kind==="circleDot"){
-    var cx=30,cy=30,r=20;
+    var cx=30,cy=30,r=20*scale;
     var rad=(rot-90)*Math.PI/180;
     var dx=cx+r*0.82*Math.cos(rad), dy=cy+r*0.82*Math.sin(rad);
     var fillAttr=spec.fillOnly===false?'fill="none"':'fill="'+color+'22"';
@@ -70,16 +77,17 @@ function nvrRenderShape(spec){
     var cx=30,cy=30;
     if(spec.mirrored) base=nvrMirrorPoints(base,cx);
     var pts=nvrRotatePoints(base,cx,cy,rot);
+    if(scale!==1) pts=nvrScalePoints(pts,cx,cy,scale);
     var fill=spec.fillOnly===false?"none":color;
     return nvrSvgWrap('<path d="'+nvrPathD(pts)+'" fill="'+fill+'" stroke="'+(spec.fillOnly===false?color:NVR_STROKE)+'" stroke-width="2.5"/>');
   }
   if(spec.kind==="star"){
-    var pts=nvrStar(30,30,20,8,rot);
+    var pts=nvrStar(30,30,20*scale,8*scale,rot);
     var fill=spec.fillOnly===false?"none":color;
     return nvrSvgWrap('<path d="'+nvrPathD(pts)+'" fill="'+fill+'" stroke="'+(spec.fillOnly===false?color:NVR_STROKE)+'" stroke-width="2.5"/>');
   }
   // regular polygon
-  var pts=nvrRegularPolygon(spec.sides||6,30,30,20,rot);
+  var pts=nvrRegularPolygon(spec.sides||6,30,30,20*scale,rot);
   var fill=spec.fillOnly===false?"none":color;
   return nvrSvgWrap('<path d="'+nvrPathD(pts)+'" fill="'+fill+'" stroke="'+(spec.fillOnly===false?color:NVR_STROKE)+'" stroke-width="2.5"/>');
 }
@@ -122,7 +130,7 @@ function nvrTplRotation(yearId){
     correctIndex:options.findIndex(function(o){return o.correct;}),
     explanation:"Each shape rotates "+step+"\u00b0 clockwise from the one before it. Continuing that pattern from the third shape gives the correct next rotation.",
     hint:"Watch how far the shape turns between each frame — the next one turns by exactly the same amount.",
-    topic:"Rotation Series"
+    topic:"Series"
   };
 }
 
@@ -160,7 +168,7 @@ function nvrTplOddOneOut(yearId){
     correctIndex:oddIdx,
     explanation:explanation,
     hint:"Compare shape, colour and fill across all four options — three will match on one of those.",
-    topic:"Odd One Out (Shapes)"
+    topic:"Odd One Out"
   };
 }
 
@@ -225,14 +233,154 @@ function nvrTplMatrix(yearId){
     correctIndex:options.findIndex(function(o){return o.correct;}),
     explanation:"Reading across the grid, the shape rotates "+step+"\u00b0 each step. The missing cell continues that same rotation.",
     hint:"Treat the three visible cells like a rotation sequence — the same rule applies to the missing one.",
-    topic:"Pattern Matrix"
+    topic:"Matrix"
+  };
+}
+
+// ── TEMPLATE: SHAPE ANALOGY (A is to B as C is to ?) ──────────────────────────
+// Kind is deliberately restricted to flag/circleDot, NOT poly — regular polygons
+// have rotational symmetry (e.g. a square rotated 90° looks identical to itself),
+// which would let a "wrong rotation" distractor accidentally render pixel-identical
+// to the correct answer. Same reasoning nvrTplRotation/nvrTplMatrix already use.
+function nvrTplAnalogy(yearId){
+  var kind=nvrPick(["flag","circleDot"]);
+  var color=nvrPick(NVR_PALETTE);
+  var colorC=nvrPick(NVR_PALETTE.filter(function(c){return c!==color;}));
+  var baseRotation=nvrPick([0,20,40,60]);
+  var rotC=nvrPick([10,50,100,140]);
+  var transformType=nvrPick(["rotate","fill","scale"]);
+
+  var specA={kind:kind,color:color,rotation:baseRotation};
+  var specC={kind:kind,color:colorC,rotation:rotC};
+  var specB,specCorrect,transformDesc,distractorSpecs;
+
+  if(transformType==="rotate"){
+    var deltaOptions=[60,90,120,150];
+    var delta=nvrPick(deltaOptions);
+    var wrongDelta=nvrPick(deltaOptions.filter(function(d){return d!==delta;}));
+    specB=Object.assign({},specA,{rotation:(baseRotation+delta)%360});
+    specCorrect=Object.assign({},specC,{rotation:(rotC+delta)%360});
+    transformDesc="the shape rotates "+delta+"\u00b0 clockwise";
+    distractorSpecs=[
+      Object.assign({},specC,{rotation:rotC}),                      // no change at all
+      Object.assign({},specC,{rotation:(rotC+wrongDelta)%360}),     // wrong amount of rotation
+      Object.assign({},specC,{fillOnly:false})                      // wrong transform type entirely
+    ];
+  }else if(transformType==="fill"){
+    specB=Object.assign({},specA,{fillOnly:false});
+    specCorrect=Object.assign({},specC,{fillOnly:false});
+    transformDesc="the shape's fill is removed, leaving just an outline";
+    distractorSpecs=[
+      Object.assign({},specC,{rotation:(rotC+90)%360}),  // wrong transform type (rotated instead)
+      Object.assign({},specC,{scale:0.6}),                // wrong transform type (shrunk instead)
+      Object.assign({},specC)                             // no change at all
+    ];
+  }else{
+    specB=Object.assign({},specA,{scale:0.6});
+    specCorrect=Object.assign({},specC,{scale:0.6});
+    transformDesc="the shape becomes smaller";
+    distractorSpecs=[
+      Object.assign({},specC),                            // no change at all
+      Object.assign({},specC,{scale:1.4}),                // wrong direction — bigger, not smaller
+      Object.assign({},specC,{rotation:(rotC+90)%360})    // wrong transform type entirely
+    ];
+  }
+
+  var svgA=nvrRenderShape(specA), svgB=nvrRenderShape(specB), svgC=nvrRenderShape(specC);
+  var correctSvg=nvrRenderShape(specCorrect);
+  var distractorSvgs=distractorSpecs.map(nvrRenderShape);
+  var options=nvrShuffle([{svg:correctSvg,correct:true}].concat(distractorSvgs.map(function(d){return {svg:d,correct:false};})));
+
+  function box(svg){
+    return '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;width:52px;height:52px;flex-shrink:0;">'+svg+'</div>';
+  }
+  var arrow='<span style="color:'+MUTED+';font-size:18px;padding:0 4px;">\u2192</span>';
+  var sep='<span style="color:'+MUTED+';font-size:14px;padding:0 12px;font-weight:900;">::</span>';
+  var qBox='<div style="background:'+CARD+';border:2px dashed '+MUTED+';border-radius:8px;padding:6px;width:52px;height:52px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:'+MUTED+';font-size:22px;font-weight:900;">?</div>';
+  var displayHtml='<div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:2px;">'+
+    box(svgA)+arrow+box(svgB)+sep+box(svgC)+arrow+qBox+
+  '</div>';
+
+  return {
+    visual:true, kind:"analogy", html:true,
+    question:"The first shape changes into the second shape in a certain way. Which option completes the second pair in the same way?",
+    displaySvgs:[displayHtml],
+    displayIsHtml:true,
+    optionsSvg:options.map(function(o){return o.svg;}),
+    correctIndex:options.findIndex(function(o){return o.correct;}),
+    explanation:"Going from the first shape to the second, "+transformDesc+". Applying that same change to the third shape gives the correct answer.",
+    hint:"Work out exactly what changes between the first two shapes, then apply that same change to the third shape.",
+    topic:"Shape Analogy"
+  };
+}
+
+// ── TEMPLATE: SHAPE CODES ─────────────────────────────────────────────────────
+// Two independent attributes (shape type, shading) each map to one letter. Three
+// of the four possible combinations are shown as worked examples; the 4th is the
+// question. Since only one combination is withheld, both attribute values are
+// always demonstrated at least once elsewhere — the code is always deducible.
+function nvrTplCodes(yearId){
+  var color=nvrPick(NVR_PALETTE);
+  var sideChoices=nvrShuffle([3,4,5,6]);
+  var sideA=sideChoices[0], sideB=sideChoices[1];
+  var letters=nvrShuffle(["B","D","F","G","H","J","K","L","M","N","P","R","S","T","V","W"]);
+  var shapeLetterA=letters[0], shapeLetterB=letters[1];
+  var shadeLetterFilled=letters[2], shadeLetterOutline=letters[3];
+
+  var combos=[
+    {sides:sideA,filled:true, code:shapeLetterA+shadeLetterFilled},
+    {sides:sideA,filled:false,code:shapeLetterA+shadeLetterOutline},
+    {sides:sideB,filled:true, code:shapeLetterB+shadeLetterFilled},
+    {sides:sideB,filled:false,code:shapeLetterB+shadeLetterOutline}
+  ];
+  var shuffledCombos=nvrShuffle(combos);
+  var target=shuffledCombos[0];
+  var examples=shuffledCombos.slice(1);
+
+  function cellHtml(sides,filled,label){
+    var svg=nvrRenderShape({kind:"poly",sides:sides,color:color,fillOnly:filled});
+    return '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;display:flex;flex-direction:column;align-items:center;gap:4px;width:52px;flex-shrink:0;">'+
+      '<div style="width:44px;height:44px;">'+svg+'</div>'+
+      '<div style="font-weight:900;color:'+WHITE+';font-size:13px;letter-spacing:1px;">'+label+'</div>'+
+    '</div>';
+  }
+  var examplesHtml=examples.map(function(e){return cellHtml(e.sides,e.filled,e.code);}).join("");
+  var targetHtml=cellHtml(target.sides,target.filled,"?");
+  var divider='<div style="width:2px;align-self:stretch;background:'+BORDER+';margin:0 6px;"></div>';
+  var displayHtml='<div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;">'+examplesHtml+divider+targetHtml+'</div>';
+
+  var otherShapeLetter=target.sides===sideA?shapeLetterB:shapeLetterA;
+  var thisShapeLetter=target.sides===sideA?shapeLetterA:shapeLetterB;
+  var thisShadeLetter=target.filled?shadeLetterFilled:shadeLetterOutline;
+  var otherShadeLetter=target.filled?shadeLetterOutline:shadeLetterFilled;
+  var candidateWrongCodes=nvrShuffle([
+    otherShapeLetter+thisShadeLetter,   // right shading, wrong shape
+    thisShapeLetter+otherShadeLetter,   // right shape, wrong shading
+    otherShapeLetter+otherShadeLetter,  // both wrong (this is actually another real code, just not this shape's)
+    thisShadeLetter+thisShapeLetter     // right letters, wrong order
+  ]).slice(0,3);
+  var options=nvrShuffle([target.code].concat(candidateWrongCodes));
+
+  return {
+    visual:true, kind:"codes", html:true,
+    question:"Each shape has a code made of two letters. Work out what each letter stands for, then choose the code for the shape marked '?'.",
+    displaySvgs:[displayHtml],
+    displayIsHtml:true,
+    optionsSvg:null,
+    options:options,
+    correctIndex:options.indexOf(target.code),
+    explanation:"The first letter shows which shape it is and the second letter shows whether it's filled in or just an outline. The '?' shape is a "+(target.sides===3?"triangle":target.sides===4?"square":target.sides===5?"pentagon":"hexagon")+" that is "+(target.filled?"filled in":"an outline")+", so its code is "+target.code+".",
+    hint:"Look at the examples: the first letter always matches the shape, and the second letter always matches the shading.",
+    topic:"Shape Codes"
   };
 }
 
 function generateVisualNVR(topic,yearId){
-  var fn=topic==="Odd One Out (Shapes)"?nvrTplOddOneOut
+  var fn=topic==="Odd One Out"?nvrTplOddOneOut
         :topic==="Mirror Image"?nvrTplMirror
-        :topic==="Pattern Matrix"?nvrTplMatrix
-        :nvrTplRotation;
+        :topic==="Matrix"?nvrTplMatrix
+        :topic==="Shape Analogy"?nvrTplAnalogy
+        :topic==="Shape Codes"?nvrTplCodes
+        :nvrTplRotation; // "Series" falls through here
   return fn(yearId);
 }
