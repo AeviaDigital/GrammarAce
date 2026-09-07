@@ -1,0 +1,1046 @@
+From 6de5fa3190f28c4e998f3e388bd0e22381032403 Mon Sep 17 00:00:00 2001
+From: KaulSays <267474517+AeviaDigital@users.noreply.github.com>
+Date: Mon, 7 Sep 2026 22:45:01 +0000
+Subject: [PATCH] NVR: rebuild shape engine (30 primitives) + rewrite all 6
+ templates
+
+- Add js/nvr-shapes.js: composite SVG engine (primitives, 6 fill patterns,
+  positioned decorations, multi-element scene compositor)
+- Add js/nvr-templates-v2.js: rewrite Series, Odd One Out, Mirror Image,
+  Matrix, Shape Analogy, Shape Codes on the new engine; richer distractor
+  logic and multi-attribute transforms (rotation+pattern combined, etc.)
+- Trim js/nvr-visual.js to shared helpers only (NVR_VISUAL_TOPICS, nvrPick,
+  nvrShuffle, nvrEasy); old single-primitive engine/templates removed after
+  confirming via grep nothing else referenced them
+- index.html: load nvr-shapes.js + nvr-templates-v2.js after nvr-visual.js
+
+Stress-tested 3000-5000x per template (real files, real load order): 0
+crashes, 0 duplicate options, 0 correct-index bugs. Fixed 2 bugs found during
+testing (Mirror Image 5-option overflow, Analogy decoration-mode crash) and
+2 shape-symmetry issues found during asymmetry checks (trapezoid/heart mirror
+no-ops, plusUneven axis mismatch).
+---
+ index.html             |   2 +
+ js/nvr-shapes.js       | 181 ++++++++++++++++++
+ js/nvr-templates-v2.js | 403 +++++++++++++++++++++++++++++++++++++++++
+ js/nvr-visual.js       | 386 ++-------------------------------------
+ 4 files changed, 599 insertions(+), 373 deletions(-)
+ create mode 100644 js/nvr-shapes.js
+ create mode 100644 js/nvr-templates-v2.js
+
+diff --git a/index.html b/index.html
+index 160025b..5571066 100644
+--- a/index.html
++++ b/index.html
+@@ -19,6 +19,8 @@
+ <script src="js/utils.js"></script>
+ <script src="js/qbank.js"></script>
+ <script src="js/nvr-visual.js"></script>
++<script src="js/nvr-shapes.js"></script>
++<script src="js/nvr-templates-v2.js"></script>
+ <script src="js/api.js"></script>
+ <script src="js/components.js"></script>
+ <script src="js/screen-auth.js"></script>
+diff --git a/js/nvr-shapes.js b/js/nvr-shapes.js
+new file mode 100644
+index 0000000..39e33b3
+--- /dev/null
++++ b/js/nvr-shapes.js
+@@ -0,0 +1,181 @@
++// ══════════════════════════════════════════════════════════════════════════════
++// NVR SHAPE ENGINE v2 — composite multi-element scene renderer
++// Every primitive is defined as raw SVG path markup inside a fixed 60x60 local
++// box, centered on (30,30). Positioning/rotation/mirroring/scaling is applied
++// uniformly via a single transform pipeline in nvrPlaceElement, so every
++// primitive — polygon or curve-based — behaves identically under transforms.
++// Deterministic: no primitive uses Math.random() internally. Randomness (which
++// shape/color/pattern/position) lives in the template layer, not here.
++// ══════════════════════════════════════════════════════════════════════════════
++
++var NVR_PALETTE2 = ["#4361EE","#EF5DA8","#06D6A0","#FFD166","#FF9F1C","#7B2FBE"];
++var NVR_STROKE2 = "#1E2654";
++
++// ── PRIMITIVE PATH LIBRARY ────────────────────────────────────────────────────
++// Each entry returns raw path `d` string(s) in the local 60x60 box.
++// Multi-path primitives (keyhole, crescent, ring) use evenodd fill-rule to cut
++// holes, so they need fill-rule set on the <path>, not on separate elements.
++
++function nvrRegPolyD(sides){
++  var pts=[];
++  for(var i=0;i<sides;i++){
++    var theta=i*2*Math.PI/sides-Math.PI/2;
++    pts.push([30+20*Math.cos(theta),30+20*Math.sin(theta)]);
++  }
++  return pts.map(function(p,i){return (i===0?"M":"L")+p[0].toFixed(2)+","+p[1].toFixed(2);}).join(" ")+" Z";
++}
++
++var NVR_PRIMITIVES = {
++  triangle:   { d: function(){ return nvrRegPolyD(3); } },
++  square:     { d: function(){ return nvrRegPolyD(4); } },
++  pentagon:   { d: function(){ return nvrRegPolyD(5); } },
++  hexagon:    { d: function(){ return nvrRegPolyD(6); } },
++  octagon:    { d: function(){ return nvrRegPolyD(8); } },
++  circle:     { d: function(){ return "M10,30 A20,20 0 1,1 50,30 A20,20 0 1,1 10,30 Z"; } },
++  star5:      { d: function(){
++    var pts=[]; for(var i=0;i<10;i++){ var r=i%2===0?20:8; var theta=i*Math.PI/5-Math.PI/2; pts.push([30+r*Math.cos(theta),30+r*Math.sin(theta)]); }
++    return pts.map(function(p,i){return (i===0?"M":"L")+p[0].toFixed(2)+","+p[1].toFixed(2);}).join(" ")+" Z";
++  }},
++  star4:      { d: function(){
++    var pts=[]; for(var i=0;i<8;i++){ var r=i%2===0?20:7; var theta=i*Math.PI/4-Math.PI/2; pts.push([30+r*Math.cos(theta),30+r*Math.sin(theta)]); }
++    return pts.map(function(p,i){return (i===0?"M":"L")+p[0].toFixed(2)+","+p[1].toFixed(2);}).join(" ")+" Z";
++  }},
++  cross:      { d: function(){
++    return "M22,10 L38,10 L38,22 L50,22 L50,38 L38,38 L38,50 L22,50 L22,38 L10,38 L10,22 L22,22 Z";
++  }},
++  arrow:      { d: function(){ // single arrow pointing "up" (north) by default
++    return "M30,8 L46,26 L36,26 L36,52 L24,52 L24,26 L14,26 Z";
++  }},
++  doubleArrow:{ d: function(){ // arrow pointing both up and down
++    return "M30,4 L44,18 L36,18 L36,42 L44,42 L30,56 L16,42 L24,42 L24,18 L16,18 Z";
++  }},
++  chevron:    { d: function(){ return "M12,38 L30,16 L48,38 L40,38 L30,26 L20,38 Z"; } },
++  teardrop:   { d: function(){ return "M30,8 C42,24 46,34 46,40 A16,16 0 1,1 14,40 C14,34 18,24 30,8 Z"; } },
++  // Kidney-bean silhouettes, deliberately lopsided (one lobe bigger, one side
++  // pinched in) so normal / mirrored / rotated all look visibly distinct —
++  // same reasoning as lshape/flag. NOT safe to treat as symmetric.
++  blobA:      { d: function(){ return "M14,8 C28,2 48,4 52,20 C55,32 46,30 40,36 C48,42 44,54 30,54 C14,54 4,44 6,30 C7,20 6,13 14,8 Z"; } },
++  blobB:      { d: function(){ return "M10,20 C8,8 26,2 38,8 C48,13 44,22 52,26 C58,30 54,42 42,44 C46,50 36,58 24,52 C12,46 14,38 8,32 C3,27 11,26 10,20 Z"; } },
++  house:      { d: function(){ return "M30,8 L52,26 L44,26 L44,52 L16,52 L16,26 L8,26 Z"; } },
++  lshape:     { d: function(){ return "M14,10 L42,10 L42,26 L26,26 L26,50 L14,50 Z"; } },
++  keyhole:    { d: function(){ return "M30,10 A10,10 0 1,1 29.9,10 Z M30,24 L38,44 L22,44 Z"; }, evenodd:true },
++  crescent:   { d: function(){ return "M30,8 A22,22 0 1,0 30,52 A17,22 0 1,1 30,8 Z"; }, evenodd:true },
++  ring:       { d: function(){ return "M30,6 A24,24 0 1,1 29.9,6 Z M30,18 A12,12 0 1,1 29.9,18 Z"; }, evenodd:true },
++
++  // ── new additions ──
++  diamond:    { d: function(){ return "M30,6 L42,30 L30,54 L18,30 Z"; } }, // elongated rhombus — visually distinct from square@45deg
++  trapezoid:  { d: function(){ return "M22,16 L38,16 L50,46 L10,46 Z"; } },
++  pacman:     { d: function(){ return "M30,30 L47,17 A20,20 0 1,0 47,43 Z"; } }, // wedge cut facing right — asymmetric, direction-testable
++  heart:      { d: function(){ return "M30,46 C10,32 8,16 20,10 C27,6.5 30,13 30,15 C30,13 33,6.5 40,10 C52,16 50,32 30,46 Z"; } },
++  zigzag:     { d: function(){ return "M26,6 L38,6 L28,26 L40,26 L22,54 L28,30 L16,30 Z"; } },
++  plusUneven: { d: function(){ return "M24,2 L36,2 L36,26 L46,26 L46,34 L36,34 L36,58 L24,58 L24,34 L2,34 L2,26 L24,26 Z"; } }, // vertical bar centered; left arm tip at x=2 (28 from center), right arm tip at x=46 (16 from center) — large, clearly visible left/right contrast
++  lshape2:    { d: function(){ return "M10,10 L30,10 L30,26 L50,26 L50,50 L10,50 Z"; } }, // different proportions from `lshape`
++  semicircle: { d: function(){ return "M10,30 A20,20 0 0,1 50,30 Z"; } }, // flat edge at the equator, rounded top
++  pennant:    { d: function(){ return "M8,14 L40,14 L40,24 L52,30 L40,36 L40,46 L8,46 Z"; } }, // banner with a triangular tail
++  star6:      { d: function(){
++    var pts=[]; for(var i=0;i<12;i++){ var r=i%2===0?20:9; var theta=i*Math.PI/6-Math.PI/2; pts.push([30+r*Math.cos(theta),30+r*Math.sin(theta)]); }
++    return pts.map(function(p,i){return (i===0?"M":"L")+p[0].toFixed(2)+","+p[1].toFixed(2);}).join(" ")+" Z";
++  }}
++};
++var NVR_SHAPE_NAMES = Object.keys(NVR_PRIMITIVES);
++
++// Broader pool for non-rotation-critical templates (Odd One Out shape-swap,
++// Shape Codes shape pairs) — includes shapes that have partial rotational or
++// reflective symmetry (diamond, semicircle, star6), which are fine there since
++// those templates don't rely on rotation/mirror distinctness.
++var NVR_SIMPLE_SHAPES = ["hexagon","pentagon","square","triangle","octagon","diamond","trapezoid","heart","star6","semicircle","pacman"];
++
++// ── FILL PATTERNS ─────────────────────────────────────────────────────────────
++// Returns {fillRef, defs} — fillRef goes in the fill="" attr, defs is markup to
++// inject into <defs>. Pattern ids are namespaced by color+type so multiple
++// elements sharing a pattern+color in one scene reuse the same def.
++function nvrFillFor(pattern,color){
++  var safeColor=color.replace("#","");
++  if(pattern==="solid") return {fillRef:color, defs:""};
++  if(pattern==="outline") return {fillRef:"none", defs:""};
++  var id="pat_"+pattern+"_"+safeColor;
++  if(pattern==="hatch"){
++    return {fillRef:"url(#"+id+")", defs:
++      '<pattern id="'+id+'" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">'+
++      '<rect width="6" height="6" fill="white"/><line x1="0" y1="0" x2="0" y2="6" stroke="'+color+'" stroke-width="3"/></pattern>'};
++  }
++  if(pattern==="crosshatch"){
++    return {fillRef:"url(#"+id+")", defs:
++      '<pattern id="'+id+'" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">'+
++      '<rect width="6" height="6" fill="white"/><line x1="0" y1="0" x2="0" y2="6" stroke="'+color+'" stroke-width="2"/>'+
++      '<line x1="0" y1="0" x2="6" y2="0" stroke="'+color+'" stroke-width="2"/></pattern>'};
++  }
++  if(pattern==="dots"){
++    return {fillRef:"url(#"+id+")", defs:
++      '<pattern id="'+id+'" patternUnits="userSpaceOnUse" width="8" height="8">'+
++      '<rect width="8" height="8" fill="white"/><circle cx="4" cy="4" r="2" fill="'+color+'"/></pattern>'};
++  }
++  if(pattern==="half"){
++    return {fillRef:"url(#"+id+")", defs:
++      '<pattern id="'+id+'" patternUnits="objectBoundingBox" width="1" height="1">'+
++      '<rect x="0" y="0" width="0.5" height="1" fill="'+color+'"/><rect x="0.5" y="0" width="0.5" height="1" fill="white"/></pattern>'};
++  }
++  return {fillRef:color, defs:""};
++}
++var NVR_FILL_PATTERNS=["solid","outline","hatch","crosshatch","dots","half"];
++
++// ── SINGLE ELEMENT → positioned <g> ───────────────────────────────────────────
++// spec: {shape, color, pattern("solid"), rotation(0), scale(1), mirrored(false),
++//        cx(30), cy(30), strokeColor}
++function nvrPlaceElement(spec){
++  var prim=NVR_PRIMITIVES[spec.shape];
++  if(!prim) throw new Error("Unknown NVR primitive: "+spec.shape);
++  var pattern=spec.pattern||"solid";
++  var color=spec.color||NVR_PALETTE2[0];
++  var fill=nvrFillFor(pattern,color);
++  var stroke=spec.strokeColor||(pattern==="outline"?color:NVR_STROKE2);
++  var cx=spec.cx!==undefined?spec.cx:30, cy=spec.cy!==undefined?spec.cy:30;
++  var scale=spec.scale||1, rot=spec.rotation||0;
++  var transform="translate("+cx+","+cy+") scale("+scale+") rotate("+rot+") "+(spec.mirrored?"scale(-1,1) ":"")+"translate(-30,-30)";
++  var fillRule=prim.evenodd?' fill-rule="evenodd"':"";
++  var path='<path d="'+prim.d()+'" fill="'+fill.fillRef+'" stroke="'+stroke+'" stroke-width="2.5"'+fillRule+'/>';
++  return { defs:fill.defs, markup:'<g transform="'+transform+'">'+path+'</g>' };
++}
++
++// ── DECORATION ANCHORS ────────────────────────────────────────────────────────
++// Named offsets (relative to a 60x60-box-sized main element) for attaching small
++// decorations — dots, tiny arrows, tiny shapes — around a main shape. Used for
++// GL-style items where meaning is carried by an attribute's *position*.
++var NVR_ANCHORS={
++  N:[30,4], S:[30,56], E:[56,30], W:[4,30],
++  NE:[50,10], NW:[10,10], SE:[50,50], SW:[10,50]
++};
++
++// ── SCENE COMPOSITOR ──────────────────────────────────────────────────────────
++// elements: array of specs, each additionally may include cx/cy in *canvas*
++// coordinates (not local box coords — nvrPlaceElement handles that offset).
++// viewBox defaults to a square big enough for a main shape + ring of decorations.
++function nvrRenderScene(elements,viewSize){
++  viewSize=viewSize||60;
++  var defsSet={}, bodies=[];
++  elements.forEach(function(spec){
++    var placed=nvrPlaceElement(spec);
++    if(placed.defs) defsSet[placed.defs]=true;
++    bodies.push(placed.markup);
++  });
++  var defsMarkup=Object.keys(defsSet).join("");
++  return '<svg viewBox="0 0 '+viewSize+' '+viewSize+'" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" style="display:block">'+
++    (defsMarkup?"<defs>"+defsMarkup+"</defs>":"")+bodies.join("")+'</svg>';
++}
++
++// Convenience: single-shape render (replaces old nvrRenderShape for simple cases)
++function nvrRenderSingle(spec){
++  var s=Object.assign({cx:30,cy:30},spec);
++  return nvrRenderScene([s],60);
++}
++
++// Convenience: main shape + decorations placed at named anchors, on a 60x60 canvas.
++// decorations: array of {anchor:"N", shape, color, pattern, scale(0.35), rotation}
++function nvrRenderWithDecorations(mainSpec,decorations){
++  var elements=[Object.assign({cx:30,cy:30},mainSpec)];
++  (decorations||[]).forEach(function(dec){
++    var pos=NVR_ANCHORS[dec.anchor]||[30,30];
++    elements.push(Object.assign({cx:pos[0],cy:pos[1],scale:dec.scale||0.35,rotation:dec.rotation||0},dec,{cx:pos[0],cy:pos[1]}));
++  });
++  return nvrRenderScene(elements,60);
++}
+diff --git a/js/nvr-templates-v2.js b/js/nvr-templates-v2.js
+new file mode 100644
+index 0000000..33bb9bf
+--- /dev/null
++++ b/js/nvr-templates-v2.js
+@@ -0,0 +1,403 @@
++// ══════════════════════════════════════════════════════════════════════════════
++// NVR TEMPLATES v2 — rewritten on the nvr-shapes.js composite engine.
++// Assumes nvrPick/nvrShuffle/nvrEasy (from nvr-visual.js) and CARD/BORDER/MUTED/
++// WHITE (from constants.js) are already in scope, same as the templates they
++// replace. Order matches the original file: Series, Odd One Out, Mirror, Matrix,
++// Shape Analogy, Shape Codes.
++// ══════════════════════════════════════════════════════════════════════════════
++
++// Primitives with NO rotational symmetry — safe for rotation-based templates
++// (Series/Matrix/Mirror), same reasoning the old code used to exclude regular
++// polygons from those templates.
++var NVR_ASYMMETRIC = ["blobA","blobB","arrow","lshape","chevron","teardrop","house","keyhole",
++  "pacman","zigzag","plusUneven","lshape2","pennant"]; // trapezoid & heart excluded: both are bilaterally
++  // symmetric, so mirroring them is a no-op — confirmed by direct render check, not assumed.
++var NVR_PATTERN_CYCLE = ["outline","hatch","dots","solid"];
++
++// Renders a spec to SVG and returns it; used for de-dup checks across options.
++function nvrSvgOf(spec){ return nvrRenderSingle(spec); }
++
++// Given a list of candidate specs (already containing the correct one at index
++// 0), dedupes by rendered-SVG string and — if collisions leave us short — backs
++// fills with small random rotation nudges until 4 visually-distinct options
++// exist. Returns {options:[svg...], correctIndex}.
++function nvrBuildOptions(specs){
++  var seen={}, keep=[];
++  specs.forEach(function(s,i){
++    if(keep.length>=4) return; // cap: never exceed 4 options; correct (i===0) is processed first so it's always kept
++    var svg=nvrSvgOf(s);
++    if(!seen[svg]){ seen[svg]=true; keep.push({spec:s,svg:svg,correct:i===0}); }
++  });
++  var guard=0;
++  while(keep.length<4 && guard<40){
++    guard++;
++    var base=Object.assign({},specs[specs.length-1]);
++    base.rotation=((base.rotation||0)+15+Math.floor(Math.random()*300))%360;
++    var svg=nvrSvgOf(base);
++    if(!seen[svg]){ seen[svg]=true; keep.push({spec:base,svg:svg,correct:false}); }
++  }
++  var shuffled=nvrShuffle(keep);
++  return { options:shuffled.map(function(k){return k.svg;}), correctIndex:shuffled.findIndex(function(k){return k.correct;}) };
++}
++
++function nvrBox(svg){
++  return '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;width:52px;height:52px;flex-shrink:0;">'+svg+'</div>';
++}
++function nvrQBox(){
++  return '<div style="background:'+CARD+';border:2px dashed '+MUTED+';border-radius:8px;padding:6px;width:52px;height:52px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:'+MUTED+';font-size:22px;font-weight:900;">?</div>';
++}
++function nvrArrowSep(){ return '<span style="color:'+MUTED+';font-size:18px;padding:0 4px;">\u2192</span>'; }
++
++// ── TEMPLATE: SERIES (rotation, optionally combined with pattern cycling) ────
++function nvrTplRotation2(yearId){
++  var easy=nvrEasy(yearId);
++  var shape=nvrPick(NVR_ASYMMETRIC);
++  var color=nvrPick(NVR_PALETTE2);
++  var rotStep=easy?nvrPick([60,90]):nvrPick([30,40,45,60]);
++  var start=nvrPick([0,20,40]);
++  var alsoPattern=!easy && Math.random()<0.5;
++  var pIdx0=Math.floor(Math.random()*NVR_PATTERN_CYCLE.length);
++  var pStep=alsoPattern?1:0;
++
++  function specAt(i){
++    return {shape:shape,color:color,rotation:(start+i*rotStep)%360,
++      pattern:NVR_PATTERN_CYCLE[(pIdx0+i*pStep)%NVR_PATTERN_CYCLE.length]};
++  }
++  var frames=[0,1,2].map(function(i){return nvrRenderSingle(specAt(i));});
++  var correctSpec=specAt(3);
++  var wrongRot=nvrPick([1,2,4,5].filter(function(k){return k!==3;}));
++  var candidateSpecs=[
++    correctSpec,
++    Object.assign({},correctSpec,{rotation:specAt(wrongRot).rotation}),        // wrong rotation amount
++    Object.assign({},correctSpec,{pattern:NVR_PATTERN_CYCLE[(pIdx0+2*pStep+1)%NVR_PATTERN_CYCLE.length]}), // right rotation, wrong pattern
++    specAt(2)                                                                   // no progress at all
++  ];
++  var built=nvrBuildOptions(candidateSpecs);
++  var desc="rotates "+rotStep+"\u00b0 clockwise each step"+(alsoPattern?", and the fill pattern cycles through outline \u2192 hatch \u2192 dots \u2192 solid":"");
++  return {
++    visual:true, kind:"rotation",
++    question:"Look at the sequence. "+(alsoPattern?"Two things change each step.":"Each shape turns by the same amount.")+" Which option comes next?",
++    displaySvgs:frames,
++    optionsSvg:built.options,
++    correctIndex:built.correctIndex,
++    explanation:"Going along the sequence, the shape "+desc+". Continuing that same pattern gives the correct next shape.",
++    hint:alsoPattern?"Track the rotation and the fill pattern separately — both change by a fixed amount each step.":"Watch how far the shape turns between each frame — the next one turns by exactly the same amount.",
++    topic:"Series"
++  };
++}
++
++// ── TEMPLATE: ODD ONE OUT ─────────────────────────────────────────────────────
++function nvrTplOddOneOut2(yearId){
++  var attr=nvrPick(["shape","color","pattern","decoration"]);
++  var oddIdx=Math.floor(Math.random()*4);
++  var rotations=nvrShuffle([0,15,30,45]);
++  var options=[], explanation="";
++
++  if(attr==="shape"){
++    var shapes=nvrShuffle(NVR_SIMPLE_SHAPES);
++    var base=shapes[0], odd=shapes[1];
++    var color=nvrPick(NVR_PALETTE2);
++    for(var i=0;i<4;i++) options.push(nvrRenderSingle({shape:i===oddIdx?odd:base,color:color,rotation:rotations[i]}));
++    explanation="Three shapes are "+base+"s, but the odd one out is a "+odd+".";
++  }else if(attr==="color"){
++    var cols=nvrShuffle(NVR_PALETTE2);
++    var base=cols[0], odd=cols[1];
++    var shape=nvrPick(NVR_SIMPLE_SHAPES);
++    for(var i=0;i<4;i++) options.push(nvrRenderSingle({shape:shape,color:i===oddIdx?odd:base,rotation:rotations[i]}));
++    explanation="Three shapes share the same colour, but the odd one out is a different colour.";
++  }else if(attr==="pattern"){
++    var pats=nvrShuffle(NVR_PATTERN_CYCLE.concat(["crosshatch"]));
++    var base=pats[0], odd=pats[1];
++    var shape=nvrPick(NVR_SIMPLE_SHAPES);
++    var color=nvrPick(NVR_PALETTE2);
++    for(var i=0;i<4;i++) options.push(nvrRenderSingle({shape:shape,color:color,pattern:i===oddIdx?odd:base,rotation:rotations[i]}));
++    explanation="Three shapes share the same fill pattern ("+base+"), but the odd one out is filled with "+odd+" instead.";
++  }else{ // decoration: three have a small dot at the same anchor, one doesn't (or has it elsewhere)
++    var shape=nvrPick(["circle","square","hexagon","octagon","diamond"]);
++    var color=nvrPick(NVR_PALETTE2);
++    var anchor=nvrPick(["N","S","E","W"]);
++    var oddAnchor=nvrPick(["N","S","E","W"].filter(function(a){return a!==anchor;}));
++    for(var i=0;i<4;i++){
++      var decoAnchor=i===oddIdx?oddAnchor:anchor;
++      options.push(nvrRenderWithDecorations({shape:shape,color:color,pattern:"outline",rotation:rotations[i]},
++        [{anchor:decoAnchor,shape:"circle",color:NVR_STROKE2,pattern:"solid",scale:0.15}]));
++    }
++    explanation="Three shapes have a small dot on the same side, but the odd one out has its dot on a different side.";
++  }
++  return {
++    visual:true, kind:"oddOneOut",
++    question:"Three of these four shapes share something in common. Which one does NOT belong?",
++    displaySvgs:null,
++    optionsSvg:options,
++    correctIndex:oddIdx,
++    explanation:explanation,
++    hint:"Compare shape, colour, fill pattern and any small marks across all four options — three will match on one of those.",
++    topic:"Odd One Out"
++  };
++}
++
++// ── TEMPLATE: MIRROR IMAGE ────────────────────────────────────────────────────
++function nvrTplMirror2(yearId){
++  var shape=nvrPick(NVR_ASYMMETRIC);
++  var color=nvrPick(NVR_PALETTE2);
++  var pattern=nvrPick(["solid","outline","hatch","dots"]);
++  var rotation=nvrPick([0,20,40,60,80,100]);
++  var shownSpec={shape:shape,color:color,pattern:pattern,rotation:rotation};
++  var correctSpec={shape:shape,color:color,pattern:pattern,rotation:rotation,mirrored:true};
++  var shown=nvrRenderSingle(shownSpec);
++
++  var distractorSpecs=[
++    {shape:shape,color:color,pattern:pattern,rotation:(rotation+90)%360},               // rotated, not mirrored
++    {shape:shape,color:color,pattern:pattern,rotation:(rotation+180)%360},              // rotated 180, not mirrored
++    {shape:shape,color:color,pattern:pattern,rotation:rotation},                        // identical to shown (no change)
++    {shape:shape,color:color,pattern:nvrPick(NVR_PATTERN_CYCLE.filter(function(p){return p!==pattern;})),rotation:rotation,mirrored:true} // right mirror, wrong pattern
++  ];
++  var built=nvrBuildOptions([correctSpec].concat(distractorSpecs));
++  return {
++    visual:true, kind:"mirror",
++    question:"Which option is the mirror image of the shape shown (flipped left-to-right, not rotated)?",
++    displaySvgs:[shown],
++    optionsSvg:built.options,
++    correctIndex:built.correctIndex,
++    explanation:"A mirror image is flipped left-to-right like a reflection, not turned. The other options are either the original shape rotated (which changes orientation but not 'handedness') or have the wrong fill pattern.",
++    hint:"Imagine holding the shape up to a mirror on its right side — that flipped version is the answer, not a turned or re-coloured version.",
++    topic:"Mirror Image"
++  };
++}
++
++// ── TEMPLATE: PATTERN MATRIX (2x2 grid, one cell missing) ────────────────────
++function nvrTplMatrix2(yearId){
++  var easy=nvrEasy(yearId);
++  var shape=nvrPick(NVR_ASYMMETRIC);
++  var color=nvrPick(NVR_PALETTE2);
++  var rotStep=easy?90:nvrPick([45,60,90]);
++  var start=nvrPick([0,15,30]);
++  var alsoPattern=!easy && Math.random()<0.5;
++  var pIdx0=Math.floor(Math.random()*NVR_PATTERN_CYCLE.length);
++  var pStep=alsoPattern?1:0;
++
++  function specAt(i){
++    return {shape:shape,color:color,rotation:(start+i*rotStep)%360,
++      pattern:NVR_PATTERN_CYCLE[(pIdx0+i*pStep)%NVR_PATTERN_CYCLE.length]};
++  }
++  var cellA=nvrRenderSingle(specAt(0)), cellB=nvrRenderSingle(specAt(1)), cellC=nvrRenderSingle(specAt(2));
++  var correctSpec=specAt(3);
++  var gridSvg='<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;width:120px;margin:0 auto;">'+
++    '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;">'+cellA+'</div>'+
++    '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;">'+cellB+'</div>'+
++    '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;">'+cellC+'</div>'+
++    '<div style="background:'+CARD+';border:2px dashed '+MUTED+';border-radius:8px;padding:6px;display:flex;align-items:center;justify-content:center;color:'+MUTED+';font-size:26px;font-weight:900;">?</div>'+
++  '</div>';
++  var wrongRot=nvrPick([0,1,4,5]);
++  var candidateSpecs=[
++    correctSpec,
++    Object.assign({},correctSpec,{rotation:specAt(wrongRot).rotation}),
++    Object.assign({},correctSpec,{pattern:NVR_PATTERN_CYCLE[(pIdx0+2*pStep+1)%NVR_PATTERN_CYCLE.length]}),
++    specAt(2)
++  ];
++  var built=nvrBuildOptions(candidateSpecs);
++  return {
++    visual:true, kind:"matrix", html:true,
++    question:"The grid follows a pattern reading left-to-right, top-to-bottom. Which shape completes the missing cell?",
++    displaySvgs:[gridSvg],
++    displayIsHtml:true,
++    optionsSvg:built.options,
++    correctIndex:built.correctIndex,
++    explanation:"Reading across the grid, the shape rotates "+rotStep+"\u00b0 each step"+(alsoPattern?" and the fill pattern also cycles":"")+". The missing cell continues that same pattern.",
++    hint:"Treat the three visible cells like a sequence — the same rule that got you from cell 1 to cell 3 applies to the missing one.",
++    topic:"Matrix"
++  };
++}
++
++// ── TEMPLATE: SHAPE ANALOGY (A is to B as C is to ?) ──────────────────────────
++function nvrTplAnalogy2(yearId){
++  var shape=nvrPick(NVR_ASYMMETRIC);
++  var color=nvrPick(NVR_PALETTE2);
++  var colorC=nvrPick(NVR_PALETTE2.filter(function(c){return c!==color;}));
++  var baseRotation=nvrPick([0,20,40,60]);
++  var rotC=nvrPick([10,50,100,140]);
++  var transformType=nvrPick(["rotate","pattern","scale","decoration","rotate+pattern"]);
++
++  var specA={shape:shape,color:color,rotation:baseRotation,pattern:"solid"};
++  var specC={shape:shape,color:colorC,rotation:rotC,pattern:"solid"};
++  var specB,specCorrect,transformDesc,distractorSpecs;
++
++  if(transformType==="rotate"){
++    var delta=nvrPick([60,90,120,150]);
++    var wrongDelta=nvrPick([60,90,120,150].filter(function(d){return d!==delta;}));
++    specB=Object.assign({},specA,{rotation:(baseRotation+delta)%360});
++    specCorrect=Object.assign({},specC,{rotation:(rotC+delta)%360});
++    transformDesc="the shape rotates "+delta+"\u00b0 clockwise";
++    distractorSpecs=[
++      Object.assign({},specC),
++      Object.assign({},specC,{rotation:(rotC+wrongDelta)%360}),
++      Object.assign({},specC,{pattern:"outline"})
++    ];
++  }else if(transformType==="pattern"){
++    var newPattern=nvrPick(["outline","hatch","dots","half"]);
++    specB=Object.assign({},specA,{pattern:newPattern});
++    specCorrect=Object.assign({},specC,{pattern:newPattern});
++    transformDesc="the fill changes to "+newPattern;
++    distractorSpecs=[
++      Object.assign({},specC,{rotation:(rotC+90)%360}),
++      Object.assign({},specC,{scale:0.6}),
++      Object.assign({},specC)
++    ];
++  }else if(transformType==="scale"){
++    specB=Object.assign({},specA,{scale:0.6});
++    specCorrect=Object.assign({},specC,{scale:0.6});
++    transformDesc="the shape becomes smaller";
++    distractorSpecs=[
++      Object.assign({},specC),
++      Object.assign({},specC,{scale:1.4}),
++      Object.assign({},specC,{rotation:(rotC+90)%360})
++    ];
++  }else if(transformType==="decoration"){
++    specB={svgSpec:"decorated", main:specA, deco:{anchor:"N",shape:"circle",color:NVR_STROKE2,pattern:"solid",scale:0.15}};
++    specCorrect={svgSpec:"decorated", main:specC, deco:{anchor:"N",shape:"circle",color:NVR_STROKE2,pattern:"solid",scale:0.15}};
++    transformDesc="a small dot is added above the shape";
++    distractorSpecs=[
++      {svgSpec:"decorated", main:specC, deco:{anchor:"S",shape:"circle",color:NVR_STROKE2,pattern:"solid",scale:0.15}}, // dot, wrong side
++      {svgSpec:"plain", main:specC},                                                                                    // no dot added
++      {svgSpec:"decorated", main:Object.assign({},specC,{rotation:(rotC+90)%360}), deco:{anchor:"N",shape:"circle",color:NVR_STROKE2,pattern:"solid",scale:0.15}}
++    ];
++  }else{ // rotate+pattern combined — matches the "two things change" complexity in the screenshots
++    var delta2=nvrPick([60,90,120]);
++    var newPattern2=nvrPick(["outline","hatch","dots"]);
++    specB=Object.assign({},specA,{rotation:(baseRotation+delta2)%360,pattern:newPattern2});
++    specCorrect=Object.assign({},specC,{rotation:(rotC+delta2)%360,pattern:newPattern2});
++    transformDesc="the shape rotates "+delta2+"\u00b0 AND the fill changes to "+newPattern2;
++    distractorSpecs=[
++      Object.assign({},specC,{rotation:(rotC+delta2)%360}),           // rotation right, pattern unchanged
++      Object.assign({},specC,{pattern:newPattern2}),                  // pattern right, rotation unchanged
++      Object.assign({},specC)                                         // neither changed
++    ];
++  }
++
++  function renderAnalogySpec(s){
++    if(s.svgSpec==="decorated") return nvrRenderWithDecorations(s.main,[s.deco]);
++    if(s.svgSpec==="plain") return nvrRenderSingle(s.main);
++    return nvrRenderSingle(s);
++  }
++  var svgA=renderAnalogySpec(specA), svgB=renderAnalogySpec(specB), svgC=renderAnalogySpec(specC);
++  // nvrBuildOptions can't dedupe these specs (some are wrapped {svgSpec,main,deco} objects
++  // for decorated shapes, not plain shape specs) so options are built manually below.
++  var allSpecs=[specCorrect].concat(distractorSpecs);
++  var seen={}, keep=[];
++  allSpecs.forEach(function(s,i){
++    if(keep.length>=4) return;
++    var svg=renderAnalogySpec(s);
++    if(!seen[svg]){ seen[svg]=true; keep.push({svg:svg,correct:i===0}); }
++  });
++  var guard=0;
++  while(keep.length<4 && guard<20){
++    guard++;
++    var extra=Object.assign({},specC,{rotation:Math.floor(Math.random()*360)});
++    var svg=nvrRenderSingle(extra);
++    if(!seen[svg]){ seen[svg]=true; keep.push({svg:svg,correct:false}); }
++  }
++  var shuffled=nvrShuffle(keep);
++
++  var displayHtml='<div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:2px;">'+
++    nvrBox(svgA)+nvrArrowSep()+nvrBox(svgB)+
++    '<span style="color:'+MUTED+';font-size:14px;padding:0 12px;font-weight:900;">::</span>'+
++    nvrBox(svgC)+nvrArrowSep()+nvrQBox()+
++  '</div>';
++
++  return {
++    visual:true, kind:"analogy", html:true,
++    question:"The first shape changes into the second shape in a certain way. Which option completes the second pair in the same way?",
++    displaySvgs:[displayHtml],
++    displayIsHtml:true,
++    optionsSvg:shuffled.map(function(k){return k.svg;}),
++    correctIndex:shuffled.findIndex(function(k){return k.correct;}),
++    explanation:"Going from the first shape to the second, "+transformDesc+". Applying that same change to the third shape gives the correct answer.",
++    hint:"Work out exactly what changes between the first two shapes, then apply that same change to the third shape.",
++    topic:"Shape Analogy"
++  };
++}
++
++// ── TEMPLATE: SHAPE CODES ─────────────────────────────────────────────────────
++// Two independent code letters per shape, drawn from a richer attribute space
++// than the old binary filled/outline: either (shape x fill-pattern) or
++// (shape x decoration-position). Three of four combinations shown as worked
++// examples; the 4th is the question — both attribute values always appear
++// elsewhere, so the code stays deducible.
++function nvrTplCodes2(yearId){
++  var subtype=nvrPick(["pattern","decoration"]);
++  var color=nvrPick(NVR_PALETTE2);
++  var shapeChoices=nvrShuffle(NVR_SIMPLE_SHAPES);
++  var shapeA=shapeChoices[0], shapeB=shapeChoices[1];
++  var letters=nvrShuffle(["B","D","F","G","H","J","K","L","M","N","P","R","S","T","V","W"]);
++  var shapeLetterA=letters[0], shapeLetterB=letters[1];
++  var attr1Letter=letters[2], attr2Letter=letters[3];
++
++  var attrValues, renderCell;
++  if(subtype==="pattern"){
++    attrValues=nvrShuffle(["hatch","dots"]);
++    renderCell=function(shape,attrVal){ return nvrRenderSingle({shape:shape,color:color,pattern:attrVal}); };
++  }else{
++    attrValues=nvrShuffle(["N","E"]);
++    renderCell=function(shape,attrVal){
++      return nvrRenderWithDecorations({shape:shape,color:color,pattern:"outline"},
++        [{anchor:attrVal,shape:"circle",color:NVR_STROKE2,pattern:"solid",scale:0.15}]);
++    };
++  }
++  var combos=[
++    {shape:shapeA,attr:attrValues[0],code:shapeLetterA+attr1Letter},
++    {shape:shapeA,attr:attrValues[1],code:shapeLetterA+attr2Letter},
++    {shape:shapeB,attr:attrValues[0],code:shapeLetterB+attr1Letter},
++    {shape:shapeB,attr:attrValues[1],code:shapeLetterB+attr2Letter}
++  ];
++  var shuffledCombos=nvrShuffle(combos);
++  var target=shuffledCombos[0];
++  var examples=shuffledCombos.slice(1);
++
++  function cellHtml(shape,attrVal,label){
++    var svg=renderCell(shape,attrVal);
++    return '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;display:flex;flex-direction:column;align-items:center;gap:4px;width:52px;flex-shrink:0;">'+
++      '<div style="width:44px;height:44px;">'+svg+'</div>'+
++      '<div style="font-weight:900;color:'+WHITE+';font-size:13px;letter-spacing:1px;">'+label+'</div>'+
++    '</div>';
++  }
++  var examplesHtml=examples.map(function(e){return cellHtml(e.shape,e.attr,e.code);}).join("");
++  var targetHtml=cellHtml(target.shape,target.attr,"?");
++  var divider='<div style="width:2px;align-self:stretch;background:'+BORDER+';margin:0 6px;"></div>';
++  var displayHtml='<div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;">'+examplesHtml+divider+targetHtml+'</div>';
++
++  var otherShapeLetter=target.shape===shapeA?shapeLetterB:shapeLetterA;
++  var thisShapeLetter=target.shape===shapeA?shapeLetterA:shapeLetterB;
++  var thisAttrLetter=target.attr===attrValues[0]?attr1Letter:attr2Letter;
++  var otherAttrLetter=target.attr===attrValues[0]?attr2Letter:attr1Letter;
++  var candidateWrongCodes=nvrShuffle([
++    otherShapeLetter+thisAttrLetter,
++    thisShapeLetter+otherAttrLetter,
++    otherShapeLetter+otherAttrLetter,
++    thisAttrLetter+thisShapeLetter
++  ]).slice(0,3);
++  var options=nvrShuffle([target.code].concat(candidateWrongCodes));
++
++  var attrDesc=subtype==="pattern"?"the fill pattern":"which side the small dot sits on";
++  return {
++    visual:true, kind:"codes", html:true,
++    question:"Each shape has a code made of two letters. Work out what each letter stands for, then choose the code for the shape marked '?'.",
++    displaySvgs:[displayHtml],
++    displayIsHtml:true,
++    optionsSvg:null,
++    options:options,
++    correctIndex:options.indexOf(target.code),
++    explanation:"The first letter shows which shape it is and the second letter shows "+attrDesc+". The '?' shape is a "+target.shape+" with code "+target.code+".",
++    hint:"Look at the examples: the first letter always matches the shape, and the second letter always matches the other attribute.",
++    topic:"Shape Codes"
++  };
++}
++
++function generateVisualNVR(topic,yearId){
++  var fn=topic==="Odd One Out"?nvrTplOddOneOut2
++        :topic==="Mirror Image"?nvrTplMirror2
++        :topic==="Matrix"?nvrTplMatrix2
++        :topic==="Shape Analogy"?nvrTplAnalogy2
++        :topic==="Shape Codes"?nvrTplCodes2
++        :nvrTplRotation2;
++  return fn(yearId);
++}
+diff --git a/js/nvr-visual.js b/js/nvr-visual.js
+index 861a2ae..cc3129b 100644
+--- a/js/nvr-visual.js
++++ b/js/nvr-visual.js
+@@ -1,97 +1,22 @@
+ // ══════════════════════════════════════════════════════════════════════════════
+-// VISUAL NON-VERBAL REASONING ENGINE
+-// Hand-built SVG shape generator. Every question here is constructed and solved
+-// by plain geometry/JS, NOT by an LLM — so the correct answer is guaranteed
+-// correct, unlike the AI-generated text-based subjects elsewhere in the app.
++// VISUAL NON-VERBAL REASONING — shared helpers
++// The actual shape-rendering engine and question templates now live in
++// nvr-shapes.js (composite SVG engine, 30 primitives) and nvr-templates-v2.js
++// (the 6 question templates: Series, Odd One Out, Mirror Image, Matrix, Shape
++// Analogy, Shape Codes). This file just keeps the small set of generic helpers
++// those two depend on, plus the topic list app.js checks against.
++//
++// Superseded: the original single-primitive/binary-fill engine that used to
++// live in this file (nvrRenderShape, nvrTplRotation, etc.) has been removed —
++// nothing else in the app referenced those functions (checked via grep before
++// deleting), so there's no dead-code risk in taking them out entirely.
+ // ══════════════════════════════════════════════════════════════════════════════
+ 
+ // Topic names here match TOPICS.nvr in constants.js exactly, so the same label
+-// works whether a question is generated visually (deterministic SVG, below) or
+-// via the LLM text-based fallback.
++// works whether a question is generated visually (deterministic SVG) or via
++// the LLM text-based fallback.
+ var NVR_VISUAL_TOPICS = ["Series","Odd One Out","Mirror Image","Matrix","Shape Analogy","Shape Codes"];
+ 
+-var NVR_PALETTE = ["#4361EE","#EF5DA8","#06D6A0","#FFD166","#FF9F1C","#7B2FBE"];
+-var NVR_STROKE = "#1E2654";
+-
+-// ── GEOMETRY HELPERS ──────────────────────────────────────────────────────────
+-function nvrRegularPolygon(sides,cx,cy,r,rotDeg){
+-  var pts=[], rot=(rotDeg||0)*Math.PI/180;
+-  for(var i=0;i<sides;i++){
+-    var theta=rot+i*2*Math.PI/sides-Math.PI/2;
+-    pts.push([cx+r*Math.cos(theta),cy+r*Math.sin(theta)]);
+-  }
+-  return pts;
+-}
+-function nvrStar(cx,cy,rOuter,rInner,rotDeg){
+-  var pts=[], rot=(rotDeg||0)*Math.PI/180, points=5;
+-  for(var i=0;i<points*2;i++){
+-    var r=i%2===0?rOuter:rInner;
+-    var theta=rot+i*Math.PI/points-Math.PI/2;
+-    pts.push([cx+r*Math.cos(theta),cy+r*Math.sin(theta)]);
+-  }
+-  return pts;
+-}
+-// Asymmetric "flag" (L-shaped hexagon) — has no rotational or mirror symmetry,
+-// so rotations and mirror images are always visually distinct from each other.
+-function nvrFlagBase(){
+-  return [[16,10],[44,10],[44,26],[28,26],[28,50],[16,50]];
+-}
+-function nvrRotatePoints(pts,cx,cy,angleDeg){
+-  var rad=angleDeg*Math.PI/180;
+-  return pts.map(function(p){
+-    var dx=p[0]-cx, dy=p[1]-cy;
+-    return [cx+dx*Math.cos(rad)-dy*Math.sin(rad), cy+dx*Math.sin(rad)+dy*Math.cos(rad)];
+-  });
+-}
+-function nvrMirrorPoints(pts,cx){
+-  return pts.map(function(p){return [cx*2-p[0],p[1]];});
+-}
+-function nvrScalePoints(pts,cx,cy,factor){
+-  return pts.map(function(p){ return [cx+(p[0]-cx)*factor, cy+(p[1]-cy)*factor]; });
+-}
+-function nvrPathD(pts){
+-  return pts.map(function(p,i){return (i===0?"M":"L")+p[0].toFixed(1)+","+p[1].toFixed(1);}).join(" ")+" Z";
+-}
+-function nvrSvgWrap(inner){
+-  return '<svg viewBox="0 0 60 60" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" style="display:block">'+inner+'</svg>';
+-}
+-
+-// ── SHAPE RENDERERS ───────────────────────────────────────────────────────────
+-// spec: {kind:"flag"|"circleDot"|"poly", sides, rotation, color, mirrored, fillOnly, scale}
+-function nvrRenderShape(spec){
+-  var color=spec.color||NVR_PALETTE[0];
+-  var rot=spec.rotation||0;
+-  var scale=spec.scale||1;
+-  if(spec.kind==="circleDot"){
+-    var cx=30,cy=30,r=20*scale;
+-    var rad=(rot-90)*Math.PI/180;
+-    var dx=cx+r*0.82*Math.cos(rad), dy=cy+r*0.82*Math.sin(rad);
+-    var fillAttr=spec.fillOnly===false?'fill="none"':'fill="'+color+'22"';
+-    return nvrSvgWrap(
+-      '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" '+fillAttr+' stroke="'+color+'" stroke-width="4"/>'+
+-      '<circle cx="'+dx.toFixed(1)+'" cy="'+dy.toFixed(1)+'" r="5" fill="'+color+'"/>'
+-    );
+-  }
+-  if(spec.kind==="flag"){
+-    var base=nvrFlagBase();
+-    var cx=30,cy=30;
+-    if(spec.mirrored) base=nvrMirrorPoints(base,cx);
+-    var pts=nvrRotatePoints(base,cx,cy,rot);
+-    if(scale!==1) pts=nvrScalePoints(pts,cx,cy,scale);
+-    var fill=spec.fillOnly===false?"none":color;
+-    return nvrSvgWrap('<path d="'+nvrPathD(pts)+'" fill="'+fill+'" stroke="'+(spec.fillOnly===false?color:NVR_STROKE)+'" stroke-width="2.5"/>');
+-  }
+-  if(spec.kind==="star"){
+-    var pts=nvrStar(30,30,20*scale,8*scale,rot);
+-    var fill=spec.fillOnly===false?"none":color;
+-    return nvrSvgWrap('<path d="'+nvrPathD(pts)+'" fill="'+fill+'" stroke="'+(spec.fillOnly===false?color:NVR_STROKE)+'" stroke-width="2.5"/>');
+-  }
+-  // regular polygon
+-  var pts=nvrRegularPolygon(spec.sides||6,30,30,20*scale,rot);
+-  var fill=spec.fillOnly===false?"none":color;
+-  return nvrSvgWrap('<path d="'+nvrPathD(pts)+'" fill="'+fill+'" stroke="'+(spec.fillOnly===false?color:NVR_STROKE)+'" stroke-width="2.5"/>');
+-}
+-
+ function nvrPick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+ function nvrShuffle(arr){
+   var a=arr.slice();
+@@ -99,288 +24,3 @@ function nvrShuffle(arr){
+   return a;
+ }
+ function nvrEasy(yearId){ return yearId==="year1"||yearId==="year2"||yearId==="year3"; }
+-
+-// ── TEMPLATE: ROTATION SERIES ─────────────────────────────────────────────────
+-function nvrTplRotation(yearId){
+-  var easy=nvrEasy(yearId);
+-  var kind=nvrPick(["flag","circleDot"]);
+-  var color=nvrPick(NVR_PALETTE);
+-  var step=easy?nvrPick([90,90,60]):nvrPick([30,45,60]);
+-  var start=nvrPick([0,15,30,45]);
+-  var frames=[0,1,2].map(function(i){return nvrRenderShape({kind:kind,color:color,rotation:start+i*step});});
+-  var correctAngle=(start+3*step)%360;
+-  var correctSvg=nvrRenderShape({kind:kind,color:color,rotation:correctAngle});
+-  var usedAngles=[correctAngle];
+-  var distractors=[];
+-  var candidates=nvrShuffle([start,(start+step)%360,(start+2*step)%360,(start+4*step)%360,(start+5*step)%360,(start-step+360)%360,(start+step*2+15)%360]);
+-  for(var i=0;i<candidates.length&&distractors.length<3;i++){
+-    var a=candidates[i];
+-    if(usedAngles.indexOf(a)===-1){ usedAngles.push(a); distractors.push(nvrRenderShape({kind:kind,color:color,rotation:a})); }
+-  }
+-  while(distractors.length<3){
+-    var rand=Math.floor(Math.random()*360);
+-    if(usedAngles.indexOf(rand)===-1){ usedAngles.push(rand); distractors.push(nvrRenderShape({kind:kind,color:color,rotation:rand})); }
+-  }
+-  var options=nvrShuffle([{svg:correctSvg,correct:true}].concat(distractors.map(function(d){return {svg:d,correct:false};})));
+-  return {
+-    visual:true, kind:"rotation",
+-    question:"Look at the sequence. Each shape turns by the same amount. Which option comes next?",
+-    displaySvgs:frames,
+-    optionsSvg:options.map(function(o){return o.svg;}),
+-    correctIndex:options.findIndex(function(o){return o.correct;}),
+-    explanation:"Each shape rotates "+step+"\u00b0 clockwise from the one before it. Continuing that pattern from the third shape gives the correct next rotation.",
+-    hint:"Watch how far the shape turns between each frame — the next one turns by exactly the same amount.",
+-    topic:"Series"
+-  };
+-}
+-
+-// ── TEMPLATE: ODD ONE OUT ─────────────────────────────────────────────────────
+-function nvrTplOddOneOut(yearId){
+-  var attr=nvrPick(["shape","color","fill"]);
+-  var oddIdx=Math.floor(Math.random()*4);
+-  // Each option gets a guaranteed-distinct rotation so two "matching" options
+-  // can never render as byte-identical SVGs (which would break the puzzle).
+-  var rotations=nvrShuffle([0,18,36,54]);
+-  var options=[], explanation="";
+-  if(attr==="shape"){
+-    var shapeChoices=nvrShuffle([{sides:6,name:"hexagon"},{sides:5,name:"pentagon"},{sides:4,name:"square"},{sides:3,name:"triangle"}]);
+-    var base=shapeChoices[0], odd=shapeChoices[1];
+-    var color=nvrPick(NVR_PALETTE);
+-    for(var i=0;i<4;i++) options.push(i===oddIdx?nvrRenderShape({kind:"poly",sides:odd.sides,color:color,rotation:rotations[i]}):nvrRenderShape({kind:"poly",sides:base.sides,color:color,rotation:rotations[i]}));
+-    explanation="Three shapes are "+base.name+"s (\u200b"+base.sides+" sides), but the odd one out is a "+odd.name+" ("+odd.sides+" sides).";
+-  }else if(attr==="color"){
+-    var cols=nvrShuffle(NVR_PALETTE);
+-    var base=cols[0], odd=cols[1];
+-    var sides=nvrPick([4,5,6]);
+-    for(var i=0;i<4;i++) options.push(nvrRenderShape({kind:"poly",sides:sides,color:i===oddIdx?odd:base,rotation:rotations[i]}));
+-    explanation="Three shapes share the same colour, but the odd one out is a different colour.";
+-  }else{
+-    var sides=nvrPick([4,5,6]);
+-    var color=nvrPick(NVR_PALETTE);
+-    for(var i=0;i<4;i++) options.push(nvrRenderShape({kind:"poly",sides:sides,color:color,fillOnly:i!==oddIdx,rotation:rotations[i]}));
+-    explanation="Three shapes are solid (filled in), but the odd one out is an outline only — no fill.";
+-  }
+-  return {
+-    visual:true, kind:"oddOneOut",
+-    question:"Three of these four shapes share something in common. Which one does NOT belong?",
+-    displaySvgs:null,
+-    optionsSvg:options,
+-    correctIndex:oddIdx,
+-    explanation:explanation,
+-    hint:"Compare shape, colour and fill across all four options — three will match on one of those.",
+-    topic:"Odd One Out"
+-  };
+-}
+-
+-// ── TEMPLATE: MIRROR IMAGE ────────────────────────────────────────────────────
+-function nvrTplMirror(yearId){
+-  var color=nvrPick(NVR_PALETTE);
+-  var rotation=nvrPick([0,20,40,60,80]);
+-  var shown=nvrRenderShape({kind:"flag",color:color,rotation:rotation,mirrored:false});
+-  var correctSvg=nvrRenderShape({kind:"flag",color:color,rotation:rotation,mirrored:true});
+-  var distractorAngles=nvrShuffle([0,90,180,270].filter(function(a){return a!==0;})).slice(0,2);
+-  distractorAngles.push((rotation+150)%360);
+-  var distractors=distractorAngles.map(function(a){return nvrRenderShape({kind:"flag",color:color,rotation:(rotation+a)%360,mirrored:false});});
+-  var options=nvrShuffle([{svg:correctSvg,correct:true}].concat(distractors.map(function(d){return {svg:d,correct:false};})));
+-  return {
+-    visual:true, kind:"mirror",
+-    question:"Which option is the mirror image of the shape shown (flipped left-to-right, not rotated)?",
+-    displaySvgs:[shown],
+-    optionsSvg:options.map(function(o){return o.svg;}),
+-    correctIndex:options.findIndex(function(o){return o.correct;}),
+-    explanation:"A mirror image is flipped left-to-right like a reflection, not turned. The other options are just the original shape rotated, which changes its orientation but not its 'handedness'.",
+-    hint:"Imagine holding the shape up to a mirror on its right side — that flipped version is the answer, not a turned version.",
+-    topic:"Mirror Image"
+-  };
+-}
+-
+-// ── TEMPLATE: PATTERN MATRIX (2x2 grid, one cell missing) ────────────────────
+-function nvrTplMatrix(yearId){
+-  var easy=nvrEasy(yearId);
+-  var kind=nvrPick(["flag","circleDot"]);
+-  var color=nvrPick(NVR_PALETTE);
+-  var step=easy?90:nvrPick([45,60,90]);
+-  var start=nvrPick([0,15,30]);
+-  var cellA=nvrRenderShape({kind:kind,color:color,rotation:start});
+-  var cellB=nvrRenderShape({kind:kind,color:color,rotation:start+step});
+-  var cellC=nvrRenderShape({kind:kind,color:color,rotation:start+2*step});
+-  var correctAngle=(start+3*step)%360;
+-  var correctSvg=nvrRenderShape({kind:kind,color:color,rotation:correctAngle});
+-  var gridSvg='<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;width:120px;margin:0 auto;">'+
+-    '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;">'+cellA+'</div>'+
+-    '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;">'+cellB+'</div>'+
+-    '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;">'+cellC+'</div>'+
+-    '<div style="background:'+CARD+';border:2px dashed '+MUTED+';border-radius:8px;padding:6px;display:flex;align-items:center;justify-content:center;color:'+MUTED+';font-size:26px;font-weight:900;">?</div>'+
+-  '</div>';
+-  var usedAngles=[correctAngle];
+-  var distractors=[];
+-  var candidates=nvrShuffle([start,(start+step)%360,(start+2*step)%360,(start+4*step)%360,(start-step+360)%360,(start+step+25)%360]);
+-  for(var i=0;i<candidates.length&&distractors.length<3;i++){
+-    var a=candidates[i];
+-    if(usedAngles.indexOf(a)===-1){ usedAngles.push(a); distractors.push(nvrRenderShape({kind:kind,color:color,rotation:a})); }
+-  }
+-  while(distractors.length<3){
+-    var rand=Math.floor(Math.random()*360);
+-    if(usedAngles.indexOf(rand)===-1){ usedAngles.push(rand); distractors.push(nvrRenderShape({kind:kind,color:color,rotation:rand})); }
+-  }
+-  var options=nvrShuffle([{svg:correctSvg,correct:true}].concat(distractors.map(function(d){return {svg:d,correct:false};})));
+-  return {
+-    visual:true, kind:"matrix", html:true,
+-    question:"The grid follows a pattern reading left-to-right, top-to-bottom. Which shape completes the missing cell?",
+-    displaySvgs:[gridSvg],
+-    displayIsHtml:true,
+-    optionsSvg:options.map(function(o){return o.svg;}),
+-    correctIndex:options.findIndex(function(o){return o.correct;}),
+-    explanation:"Reading across the grid, the shape rotates "+step+"\u00b0 each step. The missing cell continues that same rotation.",
+-    hint:"Treat the three visible cells like a rotation sequence — the same rule applies to the missing one.",
+-    topic:"Matrix"
+-  };
+-}
+-
+-// ── TEMPLATE: SHAPE ANALOGY (A is to B as C is to ?) ──────────────────────────
+-// Kind is deliberately restricted to flag/circleDot, NOT poly — regular polygons
+-// have rotational symmetry (e.g. a square rotated 90° looks identical to itself),
+-// which would let a "wrong rotation" distractor accidentally render pixel-identical
+-// to the correct answer. Same reasoning nvrTplRotation/nvrTplMatrix already use.
+-function nvrTplAnalogy(yearId){
+-  var kind=nvrPick(["flag","circleDot"]);
+-  var color=nvrPick(NVR_PALETTE);
+-  var colorC=nvrPick(NVR_PALETTE.filter(function(c){return c!==color;}));
+-  var baseRotation=nvrPick([0,20,40,60]);
+-  var rotC=nvrPick([10,50,100,140]);
+-  var transformType=nvrPick(["rotate","fill","scale"]);
+-
+-  var specA={kind:kind,color:color,rotation:baseRotation};
+-  var specC={kind:kind,color:colorC,rotation:rotC};
+-  var specB,specCorrect,transformDesc,distractorSpecs;
+-
+-  if(transformType==="rotate"){
+-    var deltaOptions=[60,90,120,150];
+-    var delta=nvrPick(deltaOptions);
+-    var wrongDelta=nvrPick(deltaOptions.filter(function(d){return d!==delta;}));
+-    specB=Object.assign({},specA,{rotation:(baseRotation+delta)%360});
+-    specCorrect=Object.assign({},specC,{rotation:(rotC+delta)%360});
+-    transformDesc="the shape rotates "+delta+"\u00b0 clockwise";
+-    distractorSpecs=[
+-      Object.assign({},specC,{rotation:rotC}),                      // no change at all
+-      Object.assign({},specC,{rotation:(rotC+wrongDelta)%360}),     // wrong amount of rotation
+-      Object.assign({},specC,{fillOnly:false})                      // wrong transform type entirely
+-    ];
+-  }else if(transformType==="fill"){
+-    specB=Object.assign({},specA,{fillOnly:false});
+-    specCorrect=Object.assign({},specC,{fillOnly:false});
+-    transformDesc="the shape's fill is removed, leaving just an outline";
+-    distractorSpecs=[
+-      Object.assign({},specC,{rotation:(rotC+90)%360}),  // wrong transform type (rotated instead)
+-      Object.assign({},specC,{scale:0.6}),                // wrong transform type (shrunk instead)
+-      Object.assign({},specC)                             // no change at all
+-    ];
+-  }else{
+-    specB=Object.assign({},specA,{scale:0.6});
+-    specCorrect=Object.assign({},specC,{scale:0.6});
+-    transformDesc="the shape becomes smaller";
+-    distractorSpecs=[
+-      Object.assign({},specC),                            // no change at all
+-      Object.assign({},specC,{scale:1.4}),                // wrong direction — bigger, not smaller
+-      Object.assign({},specC,{rotation:(rotC+90)%360})    // wrong transform type entirely
+-    ];
+-  }
+-
+-  var svgA=nvrRenderShape(specA), svgB=nvrRenderShape(specB), svgC=nvrRenderShape(specC);
+-  var correctSvg=nvrRenderShape(specCorrect);
+-  var distractorSvgs=distractorSpecs.map(nvrRenderShape);
+-  var options=nvrShuffle([{svg:correctSvg,correct:true}].concat(distractorSvgs.map(function(d){return {svg:d,correct:false};})));
+-
+-  function box(svg){
+-    return '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;width:52px;height:52px;flex-shrink:0;">'+svg+'</div>';
+-  }
+-  var arrow='<span style="color:'+MUTED+';font-size:18px;padding:0 4px;">\u2192</span>';
+-  var sep='<span style="color:'+MUTED+';font-size:14px;padding:0 12px;font-weight:900;">::</span>';
+-  var qBox='<div style="background:'+CARD+';border:2px dashed '+MUTED+';border-radius:8px;padding:6px;width:52px;height:52px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:'+MUTED+';font-size:22px;font-weight:900;">?</div>';
+-  var displayHtml='<div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:2px;">'+
+-    box(svgA)+arrow+box(svgB)+sep+box(svgC)+arrow+qBox+
+-  '</div>';
+-
+-  return {
+-    visual:true, kind:"analogy", html:true,
+-    question:"The first shape changes into the second shape in a certain way. Which option completes the second pair in the same way?",
+-    displaySvgs:[displayHtml],
+-    displayIsHtml:true,
+-    optionsSvg:options.map(function(o){return o.svg;}),
+-    correctIndex:options.findIndex(function(o){return o.correct;}),
+-    explanation:"Going from the first shape to the second, "+transformDesc+". Applying that same change to the third shape gives the correct answer.",
+-    hint:"Work out exactly what changes between the first two shapes, then apply that same change to the third shape.",
+-    topic:"Shape Analogy"
+-  };
+-}
+-
+-// ── TEMPLATE: SHAPE CODES ─────────────────────────────────────────────────────
+-// Two independent attributes (shape type, shading) each map to one letter. Three
+-// of the four possible combinations are shown as worked examples; the 4th is the
+-// question. Since only one combination is withheld, both attribute values are
+-// always demonstrated at least once elsewhere — the code is always deducible.
+-function nvrTplCodes(yearId){
+-  var color=nvrPick(NVR_PALETTE);
+-  var sideChoices=nvrShuffle([3,4,5,6]);
+-  var sideA=sideChoices[0], sideB=sideChoices[1];
+-  var letters=nvrShuffle(["B","D","F","G","H","J","K","L","M","N","P","R","S","T","V","W"]);
+-  var shapeLetterA=letters[0], shapeLetterB=letters[1];
+-  var shadeLetterFilled=letters[2], shadeLetterOutline=letters[3];
+-
+-  var combos=[
+-    {sides:sideA,filled:true, code:shapeLetterA+shadeLetterFilled},
+-    {sides:sideA,filled:false,code:shapeLetterA+shadeLetterOutline},
+-    {sides:sideB,filled:true, code:shapeLetterB+shadeLetterFilled},
+-    {sides:sideB,filled:false,code:shapeLetterB+shadeLetterOutline}
+-  ];
+-  var shuffledCombos=nvrShuffle(combos);
+-  var target=shuffledCombos[0];
+-  var examples=shuffledCombos.slice(1);
+-
+-  function cellHtml(sides,filled,label){
+-    var svg=nvrRenderShape({kind:"poly",sides:sides,color:color,fillOnly:filled});
+-    return '<div style="background:'+CARD+';border:1px solid '+BORDER+';border-radius:8px;padding:6px;display:flex;flex-direction:column;align-items:center;gap:4px;width:52px;flex-shrink:0;">'+
+-      '<div style="width:44px;height:44px;">'+svg+'</div>'+
+-      '<div style="font-weight:900;color:'+WHITE+';font-size:13px;letter-spacing:1px;">'+label+'</div>'+
+-    '</div>';
+-  }
+-  var examplesHtml=examples.map(function(e){return cellHtml(e.sides,e.filled,e.code);}).join("");
+-  var targetHtml=cellHtml(target.sides,target.filled,"?");
+-  var divider='<div style="width:2px;align-self:stretch;background:'+BORDER+';margin:0 6px;"></div>';
+-  var displayHtml='<div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;">'+examplesHtml+divider+targetHtml+'</div>';
+-
+-  var otherShapeLetter=target.sides===sideA?shapeLetterB:shapeLetterA;
+-  var thisShapeLetter=target.sides===sideA?shapeLetterA:shapeLetterB;
+-  var thisShadeLetter=target.filled?shadeLetterFilled:shadeLetterOutline;
+-  var otherShadeLetter=target.filled?shadeLetterOutline:shadeLetterFilled;
+-  var candidateWrongCodes=nvrShuffle([
+-    otherShapeLetter+thisShadeLetter,   // right shading, wrong shape
+-    thisShapeLetter+otherShadeLetter,   // right shape, wrong shading
+-    otherShapeLetter+otherShadeLetter,  // both wrong (this is actually another real code, just not this shape's)
+-    thisShadeLetter+thisShapeLetter     // right letters, wrong order
+-  ]).slice(0,3);
+-  var options=nvrShuffle([target.code].concat(candidateWrongCodes));
+-
+-  return {
+-    visual:true, kind:"codes", html:true,
+-    question:"Each shape has a code made of two letters. Work out what each letter stands for, then choose the code for the shape marked '?'.",
+-    displaySvgs:[displayHtml],
+-    displayIsHtml:true,
+-    optionsSvg:null,
+-    options:options,
+-    correctIndex:options.indexOf(target.code),
+-    explanation:"The first letter shows which shape it is and the second letter shows whether it's filled in or just an outline. The '?' shape is a "+(target.sides===3?"triangle":target.sides===4?"square":target.sides===5?"pentagon":"hexagon")+" that is "+(target.filled?"filled in":"an outline")+", so its code is "+target.code+".",
+-    hint:"Look at the examples: the first letter always matches the shape, and the second letter always matches the shading.",
+-    topic:"Shape Codes"
+-  };
+-}
+-
+-function generateVisualNVR(topic,yearId){
+-  var fn=topic==="Odd One Out"?nvrTplOddOneOut
+-        :topic==="Mirror Image"?nvrTplMirror
+-        :topic==="Matrix"?nvrTplMatrix
+-        :topic==="Shape Analogy"?nvrTplAnalogy
+-        :topic==="Shape Codes"?nvrTplCodes
+-        :nvrTplRotation; // "Series" falls through here
+-  return fn(yearId);
+-}
+-- 
+2.43.0
+
